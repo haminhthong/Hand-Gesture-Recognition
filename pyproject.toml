@@ -17,8 +17,14 @@ dependencies = [
     "mediapipe>=0.10.0",
     "numpy>=1.24.0",
     "pandas>=2.0.0",
-    "scikit-learn>=1.2.0"
+    "scikit-learn>=1.2.0",
+    "joblib>=1.3.0",
+    "pyyaml>=6.0"
 ]
+
+[project.scripts]
+hand-controller = "hand_gesture_controller.app:main"
+hand-collect = "scripts.collect_data:main"
 
 [project.optional-dependencies]
 dev = [

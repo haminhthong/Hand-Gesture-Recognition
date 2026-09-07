@@ -1,6 +1,6 @@
-"""Mô-đun tương thích ngược cho DraggableObjectManager và ShapeMenu."""
+"""Gói application quản lý tương tác giao diện canvas vật thể và menu hình học."""
 
-from .application.object_manager import (
+from .object_manager import (
     CircleObject,
     DraggableObject,
     DraggableObjectManager,
@@ -8,7 +8,7 @@ from .application.object_manager import (
     StarObject,
     TriangleObject,
 )
-from .application.shape_menu import ShapeMenu
+from .shape_menu import ShapeMenu
 
 __all__ = [
     "CircleObject",

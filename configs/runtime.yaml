@@ -1,0 +1,37 @@
+# Cấu hình thực thi Runtime cho Real-Time Hand Gesture HCI System
+camera_index: 0
+target_width: 640
+target_height: 480
+mirror_camera: true
+
+min_detection_confidence: 0.7
+min_tracking_confidence: 0.6
+max_num_hands: 1
+
+model_path: "models/static_gesture_svm_v1.joblib"
+fallback_to_rules: true
+default_accept_threshold: 0.60
+accept_thresholds:
+  Select: 0.65
+  Options: 0.70
+  Stop: 0.75
+  Peace: 0.65
+  Fist: 0.60
+  NoAction: 0.50
+
+activation_dwell_ms: 120.0
+release_dwell_ms: 100.0
+history_horizon_ms: 250.0
+hand_loss_timeout_ms: 150.0
+
+cursor_tau: 0.08
+
+cooldowns:
+  change_color: 0.5
+  delete_object: 0.5
+  toggle_canvas: 0.8
+  open_menu: 0.5
+  emergency_sos: 1.0
+
+show_debug_hud: true
+benchmark_output: null

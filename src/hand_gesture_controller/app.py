@@ -1,23 +1,39 @@
-"""Ứng dụng chính điều phối camera, nhận diện cử chỉ tay và quản lý tương tác vật thể kéo thả."""
+"""Ứng dụng chính điều phối Canonical HCI Pipeline: MediaPipe -> Calibrated SVM -> Stabilizer -> Event Mapper -> Canvas."""
 
 import argparse
 import logging
+import os
 import sys
 import time
-from typing import Any, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import cv2
 import numpy as np
 
-from .event_mapper import GestureEventMapper
-from .finger_number import FingerNumber
-from .gesture_detector import GestureDetector
-from .gesture_smoother import GestureSmoother
-from .hand_detector import HandDetector
-from .object_manager import DraggableObjectManager, ShapeMenu
-from .performance_monitor import PerformanceMonitor
+from .application.object_manager import DraggableObject, DraggableObjectManager
+from .application.shape_menu import ShapeMenu
+from .config import RuntimeConfig
+from .events.event_mapper import GestureEventMapper
+from .features.landmark_preprocessor import LandmarkPreprocessor
+from .features.motion_features import MotionFeatures
+from .perception.hand_detector import HandDetector
+from .recognition.dynamic_fsm import DynamicGestureFSM
+from .recognition.rule_baseline import RuleStaticBaseline
+from .recognition.static_predictor import StaticGesturePredictor
+from .schemas import GestureEvent, HandObservation, StableGesture, StaticPrediction
+from .telemetry.performance import PerformanceMonitor
 
 logger = logging.getLogger("hand_gesture_controller")
+
+GESTURE_COLORS: Dict[str, Tuple[int, int, int]] = {
+    "Fist": (0, 0, 255),         # Đỏ (IDLE)
+    "Select": (128, 0, 128),     # Tím (Drag)
+    "Options": (0, 128, 128),    # Xanh mòng két (Đổi màu)
+    "Stop": (0, 165, 255),       # Cam (Xóa)
+    "Peace": (255, 0, 255),      # Hồng sen (Menu)
+    "NoAction": (128, 128, 128), # Xám (Không hành động)
+    "Unknown": (180, 180, 180),
+}
 
 
 def setup_logging(log_level: str = "INFO") -> None:
@@ -30,52 +46,20 @@ def setup_logging(log_level: str = "INFO") -> None:
     )
 
 
-def overlay_image(
-    background: np.ndarray, overlay: Optional[np.ndarray], x: int, y: int
-) -> None:
-    """Chèn ảnh BGR/BGRA (kèm kênh Alpha trong suốt) lên nền background tại tọa độ (x, y).
-
-    Args:
-        background (np.ndarray): Ảnh nền BGR.
-        overlay (Optional[np.ndarray]): Ảnh phủ BGR (3 kênh) hoặc BGRA (4 kênh).
-        x (int): Tọa độ X góc trên bên trái của overlay.
-        y (int): Tọa độ Y góc trên bên trái của overlay.
-    """
-    if background is None or overlay is None or overlay.ndim != 3:
-        return
-    bg_h, bg_w = background.shape[:2]
-    ol_h, ol_w = overlay.shape[:2]
-    if x >= bg_w or y >= bg_h or x + ol_w <= 0 or y + ol_h <= 0:
-        return
-
-    x_start, y_start = max(0, x), max(0, y)
-    x_end, y_end = min(bg_w, x + ol_w), min(bg_h, y + ol_h)
-    ox, oy = x_start - x, y_start - y
-    crop = overlay[oy : oy + y_end - y_start, ox : ox + x_end - x_start]
-
-    if crop.shape[2] == 4:
-        alpha = crop[:, :, 3:4].astype(float) / 255.0
-        bg_crop = background[y_start:y_end, x_start:x_end].astype(float)
-        background[y_start:y_end, x_start:x_end] = (
-            alpha * crop[:, :, :3] + (1 - alpha) * bg_crop
-        ).astype(background.dtype)
-    elif crop.shape[2] == 3:
-        background[y_start:y_end, x_start:x_end] = crop
-
-
 class HandGestureApp:
-    """Ứng dụng chính điều phối camera, nhận diện cử chỉ tay và quản lý tương tác vật thể kéo thả."""
+    """Ứng dụng chính điều phối camera, nhận diện cử chỉ tĩnh/động và điều khiển GUI tương tác."""
 
     def __init__(
         self,
         camera_index: int = 0,
         width: int = 640,
         height: int = 480,
+        config: Optional[RuntimeConfig] = None,
         smoothing_window: int = 5,
         smoothing_votes: int = 3,
         benchmark_output: Optional[str] = None,
     ) -> None:
-        """Khởi tạo toàn bộ mô-đun ứng dụng và mở camera."""
+        """Khởi tạo toàn bộ mô-đun ứng dụng và camera."""
         if width <= 0:
             raise ValueError("Chiều rộng khung hình (--width) phải lớn hơn 0.")
         if height <= 0:
@@ -83,22 +67,59 @@ class HandGestureApp:
         if camera_index < 0:
             raise ValueError("Chỉ số camera (--camera) phải lớn hơn hoặc bằng 0.")
 
-        self.width, self.height = width, height
-        self.show_debug: bool = True
-        self.cap = self._open_camera(camera_index)
-        self.detector = HandDetector(detectionCon=0.7, maxHands=1)
-        self.finger_counter = FingerNumber()
-        self.gesture_detector = GestureDetector()
-        self.event_mapper = GestureEventMapper()
-        self.gesture_smoother = GestureSmoother(
-            window_size=smoothing_window,
-            minimum_votes=smoothing_votes,
+        self.width = width
+        self.height = height
+        self.config = config or RuntimeConfig(
+            camera_index=camera_index,
+            target_width=width,
+            target_height=height,
+            benchmark_output=benchmark_output,
         )
-        self.performance = PerformanceMonitor()
-        self.benchmark_output = benchmark_output
-        self.object_manager = DraggableObjectManager(smooth_alpha=0.4)
+
+        self.show_debug: bool = self.config.show_debug_hud
+        self.benchmark_output = benchmark_output or self.config.benchmark_output
+
+        # 1. Perception
+        self.detector = HandDetector(
+            detectionCon=self.config.min_detection_confidence,
+            trackCon=self.config.min_tracking_confidence,
+            maxHands=self.config.max_num_hands,
+        )
+
+        # 2. Features
+        self.preprocessor = LandmarkPreprocessor(mirror_left_hand=True, normalize_rotation=True)
+        self.motion_features = MotionFeatures()
+
+        # 3. Recognition (Primary: SVM, Fallback: Rules, Dynamic: FSM)
+        self.static_predictor = StaticGesturePredictor(
+            model_bundle_path=self.config.model_path,
+            default_accept_threshold=self.config.default_accept_threshold,
+        )
+        self.rule_baseline = RuleStaticBaseline()
+        self.dynamic_fsm = DynamicGestureFSM()
+
+        # 4. Temporal Stabilization
+        self.gesture_stabilizer = GestureStabilizer(
+            activation_dwell_ms=self.config.activation_dwell_ms,
+            release_dwell_ms=self.config.release_dwell_ms,
+            history_horizon_ms=self.config.history_horizon_ms,
+        )
+
+        # 5. Events & Application
+        self.event_mapper = GestureEventMapper(cooldowns=None)
+        self.object_manager = DraggableObjectManager(
+            cursor_tau=self.config.cursor_tau,
+        )
         self.shape_menu = ShapeMenu()
-        self.missing_hand_frames: int = 0
+
+        # 6. Telemetry
+        self.performance = PerformanceMonitor()
+
+        # Trạng thái theo dõi
+        self.cap: Optional[cv2.VideoCapture] = None
+        self.camera_index = camera_index
+        self.last_hand_seen_time: float = 0.0
+        self.last_stable_gesture: str = "NoAction"
 
     def _open_camera(self, camera_index: int) -> cv2.VideoCapture:
         """Mở camera với thử lại và fallback."""
@@ -112,227 +133,228 @@ class HandGestureApp:
             cap.release()
         raise RuntimeError("Không tìm thấy camera khả dụng trên hệ thống.")
 
-    def _draw_gesture_labels(
+    def _draw_hud(
         self,
         frame: np.ndarray,
-        hand_landmarks: Any,
-        static_result: Tuple[str, Tuple[int, int, int]],
-        motion_result: Tuple[str, Tuple[int, int, int]],
+        stable_label: str,
+        dynamic_label: str,
+        source: str,
+        confidence: float,
     ) -> None:
-        """Hiển thị nhãn cử chỉ tĩnh và cử chỉ chuyển động mượt mà gần cổ tay."""
-        frame_height, frame_width = frame.shape[:2]
-        wrist = hand_landmarks.landmark[0]
-        x = int(wrist.x * frame_width)
-        y = max(25, int(wrist.y * frame_height) - 30)
-        static_gesture, static_color = static_result
-        motion_gesture, motion_color = motion_result
-
-        cv2.putText(
-            frame,
-            f"Static: {static_gesture}",
-            (x, y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            static_color,
-            2,
-        )
-        cv2.putText(
-            frame,
-            f"Motion: {motion_gesture}",
-            (x, y + 25),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            motion_color,
-            2,
-        )
-
-    def _draw_hud(self, frame: np.ndarray) -> None:
-        """Vẽ card HUD hiển thị thông số FPS và độ trễ Latency ms."""
+        """Vẽ card HUD hiển thị thông số FPS, Latency Breakdown và trạng thái cử chỉ."""
         if not self.show_debug:
             return
 
         summary = self.performance.summary()
         fps_text = f"FPS: {summary['average_fps']:.1f}"
         lat_text = f"Latency: {summary['average_latency_ms']:.1f}ms (P95: {summary['p95_latency_ms']:.1f}ms)"
-        frames_text = f"Frames: {summary['total_frames']}"
+        mode_text = f"Source: {source.upper()} | Conf: {confidence:.2f}"
+        state_text = f"Static: {stable_label} | Motion: {dynamic_label}"
 
-        cv2.rectangle(frame, (10, 10), (320, 90), (0, 0, 0), -1)
-        cv2.rectangle(frame, (10, 10), (320, 90), (0, 255, 0), 1)
+        # Card nền
+        cv2.rectangle(frame, (10, 10), (360, 110), (20, 20, 20), -1)
+        cv2.rectangle(frame, (10, 10), (360, 110), (0, 255, 0), 1)
 
-        cv2.putText(
-            frame, fps_text, (20, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2
-        )
-        cv2.putText(
-            frame, lat_text, (20, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1
-        )
-        cv2.putText(
-            frame, frames_text, (20, 78), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1
-        )
+        cv2.putText(frame, fps_text, (20, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        cv2.putText(frame, lat_text, (20, 54), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (220, 220, 220), 1)
+        cv2.putText(frame, mode_text, (20, 76), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 220, 255), 1)
+        cv2.putText(frame, state_text, (20, 98), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 200, 100), 1)
 
     def run(self) -> None:
         """Vòng lặp sự kiện chính của ứng dụng."""
-        logger.info("Đang khởi tạo ứng dụng Hand Gesture Controller...")
-        logger.info("Nhấn 'Q' để thoát, 'D' để bật/tắt HUD, 'C' để xóa canvas.")
+        self.cap = self._open_camera(self.camera_index)
+        logger.info("=== BẮT ĐẦU RUNTIME HAND GESTURE CONTROLLER ===")
+        logger.info("Mô hình chính: %s | Fallback Rules: %s",
+                    "SVM Calibrated" if self.static_predictor.is_ready else "Rule Baseline (Fallback)",
+                    self.config.fallback_to_rules)
+        logger.info("Phím tắt: 'Q'=Thoát, 'D'=Bật/Tắt HUD, 'C'=Xóa canvas")
 
         try:
             while True:
-                started_at = time.perf_counter()
+                t_frame_start = time.perf_counter()
+
+                # --- STAGE 1: FRAME CAPTURE ---
+                t0 = time.perf_counter()
                 ok, frame = self.cap.read()
                 if not ok or frame is None:
-                    logger.warning("Không thể đọc khung hình từ camera. Đang dừng...")
+                    logger.warning("Không thể đọc khung hình từ camera. Dừng ứng dụng...")
                     break
+                if self.config.mirror_camera:
+                    frame = cv2.flip(frame, 1)
 
-                frame = cv2.flip(frame, 1)
-                frame = self.detector.findHands(frame, draw=True)
-                results = self.detector.results
+                actual_h, actual_w = frame.shape[:2]
+                self.performance.record_stage("frame_capture", (time.perf_counter() - t0) * 1000.0)
 
-                primary_landmarks = None
-                primary_label = "Right"
+                # --- STAGE 2: PERCEPTION (MediaPipe Hands) ---
+                t0 = time.perf_counter()
+                observation: Optional[HandObservation] = self.detector.process(frame, timestamp=t_frame_start)
+                self.performance.record_stage("mediapipe", (time.perf_counter() - t0) * 1000.0)
 
-                if (
-                    results
-                    and results.multi_hand_landmarks
-                    and results.multi_handedness
-                ):
-                    primary_landmarks = results.multi_hand_landmarks[0]
-                    primary_label = results.multi_handedness[0].classification[0].label
-                    self.missing_hand_frames = 0
+                # --- STAGE 3: PREPROCESS & MOTION FEATURES ---
+                t0 = time.perf_counter()
+                dynamic_gesture = "Still"
+                if observation is not None:
+                    self.last_hand_seen_time = t_frame_start
+                    self.motion_features.update(observation)
+                self.performance.record_stage("preprocess", (time.perf_counter() - t0) * 1000.0)
+
+                # --- STAGE 4: STATIC CLASSIFICATION ---
+                t0 = time.perf_counter()
+                if observation is not None:
+                    if self.static_predictor.is_ready:
+                        static_pred = self.static_predictor.predict_observation(observation)
+                    elif self.config.fallback_to_rules:
+                        static_pred = self.rule_baseline.predict_observation(observation)
+                    else:
+                        static_pred = StaticPrediction(
+                            label="NoAction", confidence=0.0, rejected=True, source="no_model"
+                        )
                 else:
-                    self.missing_hand_frames += 1
-                    if self.missing_hand_frames > 3:
-                        self.gesture_detector.reset()
-                        self.gesture_smoother.reset()
-                        self.event_mapper.reset()
+                    static_pred = StaticPrediction(
+                        label="NoAction", confidence=0.0, rejected=True, source="no_hand"
+                    )
+                self.performance.record_stage("static_classifier", (time.perf_counter() - t0) * 1000.0)
 
-                if primary_landmarks is not None:
-                    raw_static_gesture, static_color = self.gesture_detector.detect_static_gesture(
-                        primary_landmarks
-                    )
-                    smoothed_gesture, smoothed_color = self.gesture_smoother.update(
-                        raw_static_gesture, static_color
-                    )
-                    motion_result, _ = self.gesture_detector.detect_motion_gesture(
-                        primary_landmarks
-                    )
-                    motion_gesture, _ = motion_result
+                # --- STAGE 5: DYNAMIC FSM ---
+                t0 = time.perf_counter()
+                dynamic_gesture = self.dynamic_fsm.update(observation)
+                self.performance.record_stage("dynamic_fsm", (time.perf_counter() - t0) * 1000.0)
 
-                    # Chuyển nhãn cử chỉ thành sự kiện ứng dụng (GestureEvent)
-                    event = self.event_mapper.map_gesture_to_event(
-                        smoothed_gesture, motion_gesture
+                # --- STAGE 6: TEMPORAL STABILIZER & FAILSAFE HAND-LOSS ---
+                t0 = time.perf_counter()
+                cursor_pos: Optional[Tuple[int, int]] = None
+                if observation is not None:
+                    stable_gesture = self.gesture_stabilizer.update(static_pred, timestamp=t_frame_start)
+                    cursor_pos = self.object_manager.get_cursor_position(observation, actual_w, actual_h)
+                else:
+                    # Kiểm tra mất dấu tay vượt quá hand_loss_timeout_ms (150ms)
+                    hand_lost_duration = t_frame_start - self.last_hand_seen_time
+                    if hand_lost_duration >= (self.config.hand_loss_timeout_ms / 1000.0):
+                        hand_loss_event = self.event_mapper.handle_hand_loss(timestamp=t_frame_start)
+                        self.gesture_stabilizer.reset()
+                        self.dynamic_fsm.reset()
+                        if hand_loss_event == GestureEvent.STOP_DRAG:
+                            self.object_manager.update_event(
+                                None, GestureEvent.STOP_DRAG, actual_w, actual_h
+                            )
+                    stable_gesture = StableGesture(
+                        label="NoAction", confidence=0.0, dwell_time_ms=0.0, timestamp=t_frame_start
                     )
+                self.performance.record_stage("temporal_filter", (time.perf_counter() - t0) * 1000.0)
 
+                # --- STAGE 7: EVENT MAPPER & APPLICATION ACTION ---
+                t0 = time.perf_counter()
+                event = self.event_mapper.map_gesture_to_event(
+                    gesture_label=stable_gesture.label,
+                    motion_label=dynamic_gesture,
+                    timestamp=t_frame_start,
+                )
+
+                if observation is not None:
                     self.object_manager.update_event(
-                        primary_landmarks,
+                        observation.landmarks,
                         event,
-                        self.width,
-                        self.height,
+                        actual_w,
+                        actual_h,
+                        cursor_pos=cursor_pos,
                     )
                     self.shape_menu.update(
-                        primary_landmarks,
-                        smoothed_gesture,
-                        self.width,
-                        self.height,
+                        observation,
+                        stable_gesture.label,
+                        actual_w,
+                        actual_h,
                         self.object_manager,
                     )
+                self.performance.record_stage("event_mapper", (time.perf_counter() - t0) * 1000.0)
 
-                    _, icon_img = self.finger_counter.detect_gesture(
-                        primary_landmarks, primary_label
-                    )
-                    if icon_img is not None:
-                        overlay_image(frame, icon_img, self.width - 160, 20)
+                # --- STAGE 8: RENDER & DISPLAY ---
+                t0 = time.perf_counter()
+                # Vẽ khung xương bàn tay nếu bật debug
+                if self.show_debug:
+                    frame = self.detector.draw_landmarks(frame, observation)
 
-                    self._draw_gesture_labels(
-                        frame,
-                        primary_landmarks,
-                        (smoothed_gesture, smoothed_color),
-                        motion_result,
-                    )
-                    self.object_manager.draw_cursor(
-                        frame, primary_landmarks, self.width, self.height
-                    )
-
+                # Vẽ canvas vật thể và menu
                 self.object_manager.draw_all(frame)
-                self.shape_menu.draw(frame, visible=self.object_manager.visible)
+                if cursor_pos is not None:
+                    self.object_manager.draw_cursor(
+                        frame, None, actual_w, actual_h, cursor_pos=cursor_pos
+                    )
+                self.shape_menu.draw(frame, actual_h)
 
-                self.performance.record_frame(started_at)
-                self._draw_hud(frame)
+                # Vẽ HUD Telemetry
+                self._draw_hud(
+                    frame=frame,
+                    stable_label=stable_gesture.label,
+                    dynamic_label=dynamic_gesture,
+                    source=static_pred.source,
+                    confidence=static_pred.confidence,
+                )
 
-                cv2.imshow("Hand Gesture Controller", frame)
+                cv2.imshow("Hand Gesture HCI Controller", frame)
+                self.performance.record_stage("render", (time.perf_counter() - t0) * 1000.0)
 
+                # Ghi nhận thời gian tổng cộng của frame
+                self.performance.record_frame(t_frame_start)
+
+                # Bắt phím điều khiển
                 key = cv2.waitKey(1) & 0xFF
-                if key == ord("q") or key == ord("Q"):
-                    logger.info("Nhận tín hiệu thoát từ phím Q.")
+                if key in (ord("q"), ord("Q")):
                     break
-                if key == ord("d") or key == ord("D"):
+                elif key in (ord("d"), ord("D")):
                     self.show_debug = not self.show_debug
-                if key == ord("c") or key == ord("C"):
+                elif key in (ord("c"), ord("C")):
                     self.object_manager.objects.clear()
-                    logger.info("Đã xóa toàn bộ vật thể trên canvas.")
 
         finally:
-            self._cleanup()
+            self.close()
 
-    def _cleanup(self) -> None:
-        """Giải phóng tài nguyên và lưu báo cáo benchmark nếu có."""
-        logger.info("Đang giải phóng tài nguyên hệ thống...")
-        if self.benchmark_output:
-            self.performance.save(self.benchmark_output)
-        self.cap.release()
+    def close(self) -> None:
+        """Giải phóng camera, MediaPipe và lưu telemetry benchmark nếu có."""
+        if self.cap and self.cap.isOpened():
+            self.cap.release()
         self.detector.close()
         cv2.destroyAllWindows()
-        logger.info("Ứng dụng kết thúc an toàn.")
+
+        if self.benchmark_output:
+            self.performance.save(self.benchmark_output)
+            logger.info("Đã lưu kết quả đo hiệu năng vào: %s", self.benchmark_output)
+
+
+def parse_args() -> argparse.Namespace:
+    """Xử lý đối số dòng lệnh."""
+    parser = argparse.ArgumentParser(
+        description="Real-Time Landmark-Based Hand Gesture HCI Controller"
+    )
+    parser.add_argument("--camera", type=int, default=0, help="Chỉ số camera")
+    parser.add_argument("--width", type=int, default=640, help="Chiều rộng khung hình")
+    parser.add_argument("--height", type=int, default=480, help="Chiều cao khung hình")
+    parser.add_argument("--model", type=str, default="models/static_gesture_svm_v1.joblib", help="Đường dẫn model bundle")
+    parser.add_argument("--config", type=str, default=None, help="Đường dẫn file config runtime.yaml")
+    parser.add_argument("--benchmark-output", type=str, default=None, help="Đường dẫn file json lưu hiệu năng")
+    return parser.parse_args()
 
 
 def main() -> None:
-    """Đọc tham số dòng lệnh CLI và khởi chạy ứng dụng HandGestureApp."""
-    parser = argparse.ArgumentParser(
-        description="Hand Gesture Controller - Ứng dụng tương tác đồ họa bằng cử chỉ tay"
-    )
-    parser.add_argument("--camera", type=int, default=0, help="Chỉ số camera (mặc định 0)")
-    parser.add_argument("--width", type=int, default=640, help="Chiều rộng khung hình (mặc định 640)")
-    parser.add_argument("--height", type=int, default=480, help="Chiều cao khung hình (mặc định 480)")
-    parser.add_argument(
-        "--smoothing-window",
-        type=int,
-        default=5,
-        help="Kích thước cửa sổ làm mượt cử chỉ (mặc định 5)",
-    )
-    parser.add_argument(
-        "--smoothing-votes",
-        type=int,
-        default=3,
-        help="Số phiếu tối thiểu đồng thuận cử chỉ (mặc định 3)",
-    )
-    parser.add_argument(
-        "--benchmark-output",
-        type=str,
-        default=None,
-        help="Đường dẫn xuất file JSON kết quả FPS/Latency",
-    )
-    parser.add_argument(
-        "--log-level",
-        type=str,
-        default="INFO",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        help="Mức ghi log hệ thống",
-    )
+    """Điểm nhập CLI của ứng dụng."""
+    setup_logging("INFO")
+    args = parse_args()
 
-    args = parser.parse_args()
-    setup_logging(args.log_level)
+    cfg = RuntimeConfig.from_yaml(args.config) if args.config else RuntimeConfig()
+    cfg.camera_index = args.camera
+    cfg.target_width = args.width
+    cfg.target_height = args.height
+    cfg.model_path = args.model
+    if args.benchmark_output:
+        cfg.benchmark_output = args.benchmark_output
 
-    try:
-        app = HandGestureApp(
-            camera_index=args.camera,
-            width=args.width,
-            height=args.height,
-            smoothing_window=args.smoothing_window,
-            smoothing_votes=args.smoothing_votes,
-            benchmark_output=args.benchmark_output,
-        )
-        app.run()
-    except Exception as e:
-        logger.error("Lỗi khởi chạy ứng dụng: %s", e, exc_info=True)
-        sys.exit(1)
+    app = HandGestureApp(
+        camera_index=cfg.camera_index,
+        width=cfg.target_width,
+        height=cfg.target_height,
+        config=cfg,
+        benchmark_output=cfg.benchmark_output,
+    )
+    app.run()
 
 
 if __name__ == "__main__":
