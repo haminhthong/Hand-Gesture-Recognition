@@ -5,10 +5,14 @@ import logging
 import os
 import sys
 from typing import Any, Dict
-import joblib
+
 import numpy as np
 import pandas as pd
-from sklearn.metrics import balanced_accuracy_score, classification_report, confusion_matrix, f1_score
+from sklearn.metrics import (
+    balanced_accuracy_score,
+    classification_report,
+    f1_score,
+)
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 from hand_gesture_controller.recognition.static_predictor import StaticGesturePredictor
@@ -29,7 +33,6 @@ def evaluate_model(
     predictor = StaticGesturePredictor(model_bundle_path=model_bundle_path)
     df = pd.read_csv(test_csv_path)
 
-    coord_cols = [f"{axis}{i}" for i in range(21) for axis in ("x", "y", "z")]
     y_true = df["gesture"].tolist()
     y_pred = []
     rejected_count = 0

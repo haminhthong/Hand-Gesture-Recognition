@@ -1,14 +1,11 @@
-"""File tương thích công cụ thu thập dữ liệu MediaPipe Landmarks.
-
-Chuyển hướng lời gọi đến tools/collect_landmarks.py.
-"""
+"""File tương thích cho CLI thu thập landmark MediaPipe."""
 
 import os
 import sys
 
-sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "src")))
 
-from tools.collect_landmarks import main
+from hand_gesture_controller.data_collection import main
 
 if __name__ == "__main__":
     main()

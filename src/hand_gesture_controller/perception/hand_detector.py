@@ -3,7 +3,7 @@
 import logging
 import math
 import time
-from typing import Any, Optional, Tuple
+from typing import Any, Optional
 
 import cv2
 import numpy as np

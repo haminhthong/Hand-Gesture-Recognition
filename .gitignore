@@ -5,6 +5,8 @@ venv/
 build/
 dist/
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
 .idea/
 .vscode/
 .coverage
@@ -13,6 +15,9 @@ htmlcov/
 # Artifacts & Benchmark reports
 artifacts/*.json
 reports/
+models/
+data/processed/
+*.joblib
 
 # Data & Privacy
 data/raw/

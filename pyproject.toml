@@ -24,7 +24,10 @@ dependencies = [
 
 [project.scripts]
 hand-controller = "hand_gesture_controller.app:main"
-hand-collect = "scripts.collect_data:main"
+hand-collect = "hand_gesture_controller.data_collection:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [project.optional-dependencies]
 dev = [
@@ -42,6 +45,11 @@ addopts = "-v --strict-markers"
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+exclude = ["Image", "data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E501"]
 
 [tool.mypy]
 python_version = "3.10"

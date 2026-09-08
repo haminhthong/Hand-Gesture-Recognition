@@ -7,6 +7,7 @@ import logging
 import os
 import random
 from typing import Dict, List
+
 import pandas as pd
 
 logger = logging.getLogger("create_splits")
@@ -21,6 +22,10 @@ def create_subject_splits(
     seed: int = 42,
 ) -> Dict[str, List[str]]:
     """Tạo phân chia Train / Val / Locked Test ở cấp độ đối tượng (subject-level)."""
+    if not 0.0 < val_ratio < 1.0 or not 0.0 < test_ratio < 1.0:
+        raise ValueError("val_ratio và test_ratio phải nằm trong khoảng (0, 1).")
+    if val_ratio + test_ratio >= 1.0:
+        raise ValueError("Tổng val_ratio và test_ratio phải nhỏ hơn 1.")
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"Không tìm thấy file dataset: {csv_path}")
 

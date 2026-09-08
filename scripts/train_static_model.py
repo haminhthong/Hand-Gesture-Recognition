@@ -1,7 +1,6 @@
 """Quy trình huấn luyện mô hình Calibrated RBF-SVM nhận diện cử chỉ tĩnh cho production."""
 
 import argparse
-import hashlib
 import json
 import logging
 import os
@@ -12,7 +11,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.metrics import classification_report, confusion_matrix, f1_score, precision_score
+from sklearn.metrics import classification_report, f1_score, precision_score
 from sklearn.model_selection import GroupKFold
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
@@ -43,8 +42,6 @@ def load_dataset_features(
     labels = []
     subjects = []
 
-    coord_cols = [f"{axis}{i}" for i in range(21) for axis in ("x", "y", "z")]
-
     for _, row in df.iterrows():
         coords = np.zeros((21, 3), dtype=np.float32)
         for i in range(21):
@@ -73,6 +70,11 @@ def train_static_gesture_model(
     X, y, subjects, df = load_dataset_features(
         config.dataset_path, preprocessor, allowed_labels=config.labels
     )
+    if len(X) == 0:
+        raise ValueError("Dataset không có mẫu nào thuộc các labels đã cấu hình.")
+    unique_subjects = set(subjects.tolist())
+    if len(unique_subjects) < 3:
+        raise ValueError("Cần ít nhất 3 subjects để có Train/Val/Test độc lập.")
     logger.info("Tổng số mẫu nạp được: %d với %d đặc trưng 63D", len(X), X.shape[1])
 
     # Nạp splits nếu có, nếu chưa thì tạo tự động
@@ -88,13 +90,31 @@ def train_static_gesture_model(
     val_subs = splits["val"]
     test_subs = splits["test"]
 
+    train_subject_set = set(train_subs)
+    val_subject_set = set(val_subs)
+    test_subject_set = set(test_subs)
+    if (
+        train_subject_set & val_subject_set
+        or train_subject_set & test_subject_set
+        or val_subject_set & test_subject_set
+    ):
+        raise ValueError("Splits bị rò rỉ subject giữa train, val và test.")
+    if train_subject_set | val_subject_set | test_subject_set != unique_subjects:
+        raise ValueError("Splits không bao phủ đúng toàn bộ subjects trong dataset.")
+
     train_mask = np.isin(subjects, train_subs)
     val_mask = np.isin(subjects, val_subs)
     test_mask = np.isin(subjects, test_subs)
 
     X_train, y_train, sub_train = X[train_mask], y[train_mask], subjects[train_mask]
-    X_val, y_val, sub_val = X[val_mask], y[val_mask], subjects[val_mask]
-    X_test, y_test, sub_test = X[test_mask], y[test_mask], subjects[test_mask]
+    X_val, y_val = X[val_mask], y[val_mask]
+    X_test, y_test = X[test_mask], y[test_mask]
+
+    if len(X_train) == 0 or len(X_val) == 0 or len(X_test) == 0:
+        raise ValueError("Train, Val và Test đều phải có dữ liệu.")
+    train_class_counts = pd.Series(y_train).value_counts()
+    if train_class_counts.min() < 3:
+        raise ValueError("Mỗi lớp trong Train cần ít nhất 3 mẫu để hiệu chuẩn SVM.")
 
     logger.info("Kích thước phân chia: Train=%d mẫu (%d subs), Val=%d mẫu (%d subs), Test=%d mẫu (%d subs)",
                 len(X_train), len(train_subs), len(X_val), len(val_subs), len(X_test), len(test_subs))
@@ -111,7 +131,10 @@ def train_static_gesture_model(
     best_gamma: Any = "scale"
     best_cv_f1 = -1.0
 
-    gkf = GroupKFold(n_splits=min(config.cv_splits, len(np.unique(sub_train))))
+    train_group_count = len(np.unique(sub_train))
+    if train_group_count < 2:
+        raise ValueError("Train cần ít nhất 2 subjects để chạy GroupKFold.")
+    gkf = GroupKFold(n_splits=min(config.cv_splits, train_group_count))
 
     for c in config.c_candidates:
         for g_str in config.gamma_candidates:
@@ -150,9 +173,10 @@ def train_static_gesture_model(
     for cls in config.labels:
         accept_thresholds[cls] = 0.60  # Ngưỡng ban đầu
 
-    # Sweep ngưỡng toàn cục để tối đa hóa Precision cho các hành động actionable
+    # Sweep ngưỡng toàn cục, ưu tiên đạt precision và false-action rate mục tiêu.
     best_t = 0.60
     best_val_score = -1.0
+    best_feasible = False
 
     for t_cand in np.linspace(0.50, 0.85, 8):
         y_val_pred_filtered = []
@@ -173,11 +197,25 @@ def train_static_gesture_model(
         else:
             false_action_rate = 0.0
 
-        # Score = Macro-F1 - 2 * False Action Rate
-        score = macro_f1 - 2.0 * false_action_rate
-        if score > best_val_score:
+        predicted_actionable = np.isin(y_val_pred_filtered, actionable_gestures)
+        true_actionable = np.isin(y_val, actionable_gestures)
+        predicted_count = int(predicted_actionable.sum())
+        actionable_precision = (
+            float((predicted_actionable & true_actionable).sum() / predicted_count)
+            if predicted_count
+            else 0.0
+        )
+        feasible = (
+            actionable_precision >= config.target_precision_actionable
+            and false_action_rate <= config.max_false_action_rate
+        )
+        # Khi có nhiều ngưỡng đạt mục tiêu, chọn Macro-F1 cao nhất; nếu chưa
+        # có ngưỡng khả thi, dùng điểm phạt để tìm ứng viên gần mục tiêu nhất.
+        score = macro_f1 if feasible else macro_f1 - 2.0 * false_action_rate
+        if (feasible and not best_feasible) or (feasible == best_feasible and score > best_val_score):
             best_val_score = score
             best_t = float(t_cand)
+            best_feasible = feasible
 
     logger.info("Ngưỡng tối ưu dò được trên Val: T_accept=%.2f", best_t)
     for g in config.labels:

@@ -34,3 +34,13 @@ def test_event_mapper_actions():
     assert mapper.map_gesture_to_event("Stop", "Still") == GestureEvent.DELETE_OBJECT
     assert mapper.map_gesture_to_event("Peace", "Still") == GestureEvent.OPEN_MENU
     assert mapper.map_gesture_to_event("Fist", "Still") == GestureEvent.NONE
+
+
+def test_event_mapper_accepts_yaml_style_cooldown_keys():
+    mapper = GestureEventMapper({"change_color": 1.0, "delete_object": 0.0})
+
+    assert mapper.map_gesture_to_event("Options", "Still", timestamp=1.0) == GestureEvent.CHANGE_COLOR
+    assert mapper.map_gesture_to_event("Unknown", "Still", timestamp=1.1) == GestureEvent.NONE
+    assert mapper.map_gesture_to_event("Options", "Still", timestamp=1.9) == GestureEvent.NONE
+    assert mapper.map_gesture_to_event("Unknown", "Still", timestamp=2.0) == GestureEvent.NONE
+    assert mapper.map_gesture_to_event("Options", "Still", timestamp=2.1) == GestureEvent.CHANGE_COLOR

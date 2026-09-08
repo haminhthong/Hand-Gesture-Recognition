@@ -2,7 +2,6 @@
 
 from collections import deque
 from typing import Deque, Optional, Tuple
-import numpy as np
 
 from ..schemas import StableGesture, StaticPrediction
 

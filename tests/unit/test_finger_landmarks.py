@@ -4,8 +4,9 @@
 """
 
 from types import SimpleNamespace
+
 from hand_gesture_controller.gesture_detector import GestureDetector
-from hand_gesture_controller.gesture_features import FINGER_LANDMARKS, is_finger_extended
+from hand_gesture_controller.gesture_features import FINGER_LANDMARKS
 
 
 def make_pt(x: float, y: float, z: float = 0.0) -> SimpleNamespace:

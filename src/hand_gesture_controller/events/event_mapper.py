@@ -1,7 +1,7 @@
 """Mô-đun chuyển đổi trạng thái cử chỉ ổn định thành sự kiện tương tác HCI (Event Mapper)."""
 
 import time
-from typing import Dict, Optional, Set, Tuple
+from typing import Dict, Mapping, Optional, Set, Tuple, Union
 
 from ..schemas import GestureEvent, HCIEvent, StableGesture
 
@@ -38,7 +38,10 @@ class GestureEventMapper:
     - Fail-Safe Hand-Loss: Khi mất dấu tay trong lúc đang kéo, bắt buộc phát sinh STOP_DRAG.
     """
 
-    def __init__(self, cooldowns: Optional[Dict[GestureEvent, float]] = None) -> None:
+    def __init__(
+        self,
+        cooldowns: Optional[Mapping[Union[GestureEvent, str], float]] = None,
+    ) -> None:
         """Khởi tạo GestureEventMapper.
 
         Args:
@@ -47,10 +50,36 @@ class GestureEventMapper:
         self.is_dragging: bool = False
         self.prev_gesture: Optional[str] = None
         self.prev_motion: Optional[str] = None
-        self.cooldowns: Dict[GestureEvent, float] = (
-            cooldowns if cooldowns is not None else DEFAULT_COOLDOWNS.copy()
-        )
+        self.cooldowns = self._normalize_cooldowns(cooldowns)
         self.last_event_timestamps: Dict[GestureEvent, float] = {}
+
+    @staticmethod
+    def _normalize_cooldowns(
+        cooldowns: Optional[Mapping[Union[GestureEvent, str], float]],
+    ) -> Dict[GestureEvent, float]:
+        """Chuẩn hóa cấu hình cooldown từ YAML hoặc enum về cùng một kiểu khóa."""
+        if cooldowns is None:
+            return DEFAULT_COOLDOWNS.copy()
+
+        normalized: Dict[GestureEvent, float] = {}
+        for raw_event, raw_seconds in cooldowns.items():
+            if isinstance(raw_event, GestureEvent):
+                event = raw_event
+            else:
+                try:
+                    event = GestureEvent(raw_event)
+                except ValueError:
+                    try:
+                        event = GestureEvent[raw_event.upper()]
+                    except KeyError as exc:
+                        raise ValueError(f"Sự kiện cooldown không hợp lệ: {raw_event!r}") from exc
+
+            seconds = float(raw_seconds)
+            if seconds < 0:
+                raise ValueError(f"Cooldown của {event.value} không được âm.")
+            normalized[event] = seconds
+
+        return normalized
 
     def _can_trigger_edge_event(self, event: GestureEvent, now: float) -> bool:
         """Kiểm tra sự kiện edge-triggered có thỏa mãn thời gian cooldown hay không."""

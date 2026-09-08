@@ -2,39 +2,26 @@
 
 import argparse
 import logging
-import os
-import sys
 import time
-from typing import Any, Dict, Optional, Tuple
+from pathlib import Path
+from typing import Optional, Tuple
 
 import cv2
 import numpy as np
 
-from .application.object_manager import DraggableObject, DraggableObjectManager
+from .application.object_manager import DraggableObjectManager
 from .application.shape_menu import ShapeMenu
 from .config import RuntimeConfig
 from .events.event_mapper import GestureEventMapper
-from .features.landmark_preprocessor import LandmarkPreprocessor
-from .features.motion_features import MotionFeatures
 from .perception.hand_detector import HandDetector
 from .recognition.dynamic_fsm import DynamicGestureFSM
 from .recognition.rule_baseline import RuleStaticBaseline
 from .recognition.static_predictor import StaticGesturePredictor
 from .schemas import GestureEvent, HandObservation, StableGesture, StaticPrediction
 from .telemetry.performance import PerformanceMonitor
+from .temporal.gesture_stabilizer import GestureStabilizer
 
 logger = logging.getLogger("hand_gesture_controller")
-
-GESTURE_COLORS: Dict[str, Tuple[int, int, int]] = {
-    "Fist": (0, 0, 255),         # Đỏ (IDLE)
-    "Select": (128, 0, 128),     # Tím (Drag)
-    "Options": (0, 128, 128),    # Xanh mòng két (Đổi màu)
-    "Stop": (0, 165, 255),       # Cam (Xóa)
-    "Peace": (255, 0, 255),      # Hồng sen (Menu)
-    "NoAction": (128, 128, 128), # Xám (Không hành động)
-    "Unknown": (180, 180, 180),
-}
-
 
 def setup_logging(log_level: str = "INFO") -> None:
     """Cấu hình định dạng và mức ghi log hệ thống."""
@@ -86,40 +73,40 @@ class HandGestureApp:
             maxHands=self.config.max_num_hands,
         )
 
-        # 2. Features
-        self.preprocessor = LandmarkPreprocessor(mirror_left_hand=True, normalize_rotation=True)
-        self.motion_features = MotionFeatures()
-
-        # 3. Recognition (Primary: SVM, Fallback: Rules, Dynamic: FSM)
+        # 2. Recognition (Primary: SVM, Fallback: Rules, Dynamic: FSM)
         self.static_predictor = StaticGesturePredictor(
             model_bundle_path=self.config.model_path,
             default_accept_threshold=self.config.default_accept_threshold,
+            accept_thresholds=self.config.accept_thresholds,
         )
         self.rule_baseline = RuleStaticBaseline()
-        self.dynamic_fsm = DynamicGestureFSM()
+        self.dynamic_fsm = DynamicGestureFSM(
+            on_off_timeout_seconds=self.config.on_off_timeout_seconds,
+            sos_timeout_seconds=self.config.sos_timeout_seconds,
+            enable_experimental_gestures=self.config.enable_experimental_gestures,
+        )
 
-        # 4. Temporal Stabilization
+        # 3. Temporal Stabilization
         self.gesture_stabilizer = GestureStabilizer(
             activation_dwell_ms=self.config.activation_dwell_ms,
             release_dwell_ms=self.config.release_dwell_ms,
             history_horizon_ms=self.config.history_horizon_ms,
         )
 
-        # 5. Events & Application
-        self.event_mapper = GestureEventMapper(cooldowns=None)
+        # 4. Events & Application
+        self.event_mapper = GestureEventMapper(cooldowns=self.config.cooldowns)
         self.object_manager = DraggableObjectManager(
             cursor_tau=self.config.cursor_tau,
         )
         self.shape_menu = ShapeMenu()
 
-        # 6. Telemetry
+        # 5. Telemetry
         self.performance = PerformanceMonitor()
 
         # Trạng thái theo dõi
         self.cap: Optional[cv2.VideoCapture] = None
         self.camera_index = camera_index
         self.last_hand_seen_time: float = 0.0
-        self.last_stable_gesture: str = "NoAction"
 
     def _open_camera(self, camera_index: int) -> cv2.VideoCapture:
         """Mở camera với thử lại và fallback."""
@@ -195,7 +182,6 @@ class HandGestureApp:
                 dynamic_gesture = "Still"
                 if observation is not None:
                     self.last_hand_seen_time = t_frame_start
-                    self.motion_features.update(observation)
                 self.performance.record_stage("preprocess", (time.perf_counter() - t0) * 1000.0)
 
                 # --- STAGE 4: STATIC CLASSIFICATION ---
@@ -264,6 +250,8 @@ class HandGestureApp:
                         actual_w,
                         actual_h,
                         self.object_manager,
+                        event=event,
+                        cursor_pos=cursor_pos,
                     )
                 self.performance.record_stage("event_mapper", (time.perf_counter() - t0) * 1000.0)
 
@@ -325,10 +313,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Real-Time Landmark-Based Hand Gesture HCI Controller"
     )
-    parser.add_argument("--camera", type=int, default=0, help="Chỉ số camera")
-    parser.add_argument("--width", type=int, default=640, help="Chiều rộng khung hình")
-    parser.add_argument("--height", type=int, default=480, help="Chiều cao khung hình")
-    parser.add_argument("--model", type=str, default="models/static_gesture_svm_v1.joblib", help="Đường dẫn model bundle")
+    parser.add_argument("--camera", type=int, default=None, help="Chỉ số camera")
+    parser.add_argument("--width", type=int, default=None, help="Chiều rộng khung hình")
+    parser.add_argument("--height", type=int, default=None, help="Chiều cao khung hình")
+    parser.add_argument("--model", type=str, default=None, help="Đường dẫn model bundle")
     parser.add_argument("--config", type=str, default=None, help="Đường dẫn file config runtime.yaml")
     parser.add_argument("--benchmark-output", type=str, default=None, help="Đường dẫn file json lưu hiệu năng")
     return parser.parse_args()
@@ -340,12 +328,24 @@ def main() -> None:
     args = parse_args()
 
     cfg = RuntimeConfig.from_yaml(args.config) if args.config else RuntimeConfig()
-    cfg.camera_index = args.camera
-    cfg.target_width = args.width
-    cfg.target_height = args.height
-    cfg.model_path = args.model
+    if args.camera is not None:
+        cfg.camera_index = args.camera
+    if args.width is not None:
+        cfg.target_width = args.width
+    if args.height is not None:
+        cfg.target_height = args.height
+    if args.model is not None:
+        cfg.model_path = args.model
     if args.benchmark_output:
         cfg.benchmark_output = args.benchmark_output
+
+    # Cho phép chạy console script từ thư mục khác mà vẫn tìm thấy model mặc định
+    # trong root của source tree.
+    if not Path(cfg.model_path).is_absolute() and not Path(cfg.model_path).exists():
+        project_root = Path(__file__).resolve().parents[2]
+        candidate = project_root / cfg.model_path
+        if candidate.exists():
+            cfg.model_path = str(candidate)
 
     app = HandGestureApp(
         camera_index=cfg.camera_index,

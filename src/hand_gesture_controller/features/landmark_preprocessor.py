@@ -1,6 +1,7 @@
 """Mô-đun tiền xử lý chuẩn hóa Landmark 3D thành vector đặc trưng 63D bất biến vị trí, tỉ lệ, hướng xoay và tay trái/phải."""
 
 from typing import Any, Optional
+
 import numpy as np
 
 from ..schemas import HandObservation
@@ -13,14 +14,14 @@ class LandmarkPreprocessor:
     1. Dịch chuyển cổ tay (index 0) về gốc tọa độ (0, 0, 0).
     2. Chuẩn hóa tỉ lệ theo khoảng cách cổ tay -> middle_mcp (index 9).
     3. Phản chiếu trục X cho tay trái để quy về hệ tọa độ chuẩn của tay phải.
-    4. Chuẩn hóa góc xoay trong mặt phẳng sao cho vector cổ tay -> middle_mcp hướng thẳng (-Y).
+    4. Tùy chọn chuẩn hóa góc xoay trong mặt phẳng sao cho vector cổ tay -> middle_mcp hướng thẳng (-Y).
     5. Trải phẳng thành vector 63 chiều (float32).
     """
 
     def __init__(
         self,
         mirror_left_hand: bool = True,
-        normalize_rotation: bool = True,
+        normalize_rotation: bool = False,
     ) -> None:
         """Khởi tạo LandmarkPreprocessor.
 

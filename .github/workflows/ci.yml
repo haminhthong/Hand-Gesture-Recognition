@@ -32,7 +32,7 @@ jobs:
           python -m pip install -e .
 
       - name: Compile python source files
-        run: python -m compileall -q src/ tools/ tests/
+        run: python -m compileall -q src/ scripts/ tools/ tests/
 
       - name: Run Ruff Linter
         run: python -m ruff check .

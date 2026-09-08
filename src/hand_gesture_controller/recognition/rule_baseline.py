@@ -1,7 +1,8 @@
 """Mô-đun nhận diện cử chỉ tĩnh dựa trên luật hình học (Rule Engine) đóng vai trò Baseline & Fallback."""
 
 import math
-from typing import Any, List, Optional
+from typing import List, Optional
+
 import numpy as np
 
 from ..config import DEFAULT_THRESHOLDS, GestureThresholds
@@ -75,7 +76,6 @@ class RuleStaticBaseline:
         coords = observation.landmarks
         palm_sz = max(observation.palm_size, 1e-6)
 
-        wrist = coords[0]
         thumb_tip = coords[4]
         index_tip = coords[8]
         middle_tip = coords[12]

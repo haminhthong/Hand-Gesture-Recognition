@@ -4,13 +4,12 @@ import argparse
 import logging
 import os
 import sys
-from types import SimpleNamespace
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, balanced_accuracy_score, classification_report, f1_score
+from sklearn.metrics import accuracy_score, balanced_accuracy_score, f1_score
 from sklearn.model_selection import GroupKFold, LeaveOneGroupOut
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import StandardScaler
@@ -39,8 +38,6 @@ def load_dataset_features(
     labels = []
     groups = []
     observations = []
-
-    coord_cols = [f"{axis}{i}" for i in range(21) for axis in ("x", "y", "z")]
 
     for _, row in df.iterrows():
         coords = np.zeros((21, 3), dtype=np.float32)

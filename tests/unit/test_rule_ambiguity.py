@@ -8,6 +8,7 @@ Các cặp cử chỉ cần kiểm tra tính phi nhập nhằng:
 """
 
 from types import SimpleNamespace
+
 from hand_gesture_controller.gesture_detector import GestureDetector
 
 

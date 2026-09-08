@@ -1,6 +1,7 @@
 """Integration tests kiểm tra luồng liên thông giữa Detector, Smoother, EventMapper và ObjectManager."""
 
 from types import SimpleNamespace
+
 from hand_gesture_controller.event_mapper import GestureEvent, GestureEventMapper
 from hand_gesture_controller.gesture_detector import GestureDetector
 from hand_gesture_controller.gesture_smoother import GestureSmoother

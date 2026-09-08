@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Tuple
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, balanced_accuracy_score, classification_report, f1_score
+from sklearn.metrics import accuracy_score, balanced_accuracy_score, f1_score
 from sklearn.model_selection import GroupKFold, LeaveOneGroupOut
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC

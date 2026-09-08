@@ -1,10 +1,10 @@
 """Tạo tập dữ liệu Landmark tổng hợp chất lượng cao phục vụ huấn luyện mô hình ban đầu và kiểm thử CI/CD."""
 
 import csv
-import math
 import os
 import random
 import uuid
+
 import numpy as np
 
 OUTPUT_CSV = "data/raw/landmarks_dataset.csv"

@@ -24,6 +24,10 @@ release_dwell_ms: 100.0
 history_horizon_ms: 250.0
 hand_loss_timeout_ms: 150.0
 
+on_off_timeout_seconds: 1.5
+sos_timeout_seconds: 1.5
+enable_experimental_gestures: false
+
 cursor_tau: 0.08
 
 cooldowns:

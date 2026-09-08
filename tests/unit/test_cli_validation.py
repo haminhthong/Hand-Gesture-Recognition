@@ -1,6 +1,7 @@
 """Unit tests cho tham số dòng lệnh CLI và kiểm tra hợp lệ ứng dụng."""
 
 import pytest
+
 from hand_gesture_controller.app import HandGestureApp
 from tools.collect_landmarks import collect_landmarks
 

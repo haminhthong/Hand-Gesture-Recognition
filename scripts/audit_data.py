@@ -4,8 +4,8 @@ import argparse
 import json
 import logging
 import os
-import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
+
 import numpy as np
 import pandas as pd
 

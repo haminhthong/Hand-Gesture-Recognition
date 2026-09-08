@@ -1,8 +1,8 @@
 """Mô-đun máy trạng thái hữu hạn (Dynamic FSM) nhận diện cử chỉ chuỗi động On/Off độc lập FPS."""
 
 import math
-import time
-from typing import Any, List, Optional, Tuple
+from typing import Optional, Tuple
+
 import numpy as np
 
 from ..schemas import HandObservation

@@ -2,7 +2,8 @@
 
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Dict, Optional
+
 import joblib
 import numpy as np
 
@@ -27,6 +28,7 @@ class StaticGesturePredictor:
         model_bundle_path: Optional[str] = None,
         bundle: Optional[GestureModelBundle] = None,
         default_accept_threshold: float = 0.60,
+        accept_thresholds: Optional[Dict[str, float]] = None,
     ) -> None:
         """Khởi tạo StaticGesturePredictor từ đường dẫn file .joblib hoặc bundle trực tiếp.
 
@@ -36,6 +38,7 @@ class StaticGesturePredictor:
             default_accept_threshold: Ngưỡng xác suất tối thiểu mặc định để chấp nhận một cử chỉ.
         """
         self.default_accept_threshold = default_accept_threshold
+        self.runtime_accept_thresholds = dict(accept_thresholds or {})
         self.bundle: Optional[GestureModelBundle] = None
 
         if bundle is not None:
@@ -47,15 +50,18 @@ class StaticGesturePredictor:
             pre_cfg = self.bundle.preprocessor_config or {}
             self.preprocessor = LandmarkPreprocessor(
                 mirror_left_hand=pre_cfg.get("mirror_left_hand", True),
-                normalize_rotation=pre_cfg.get("normalize_rotation", True),
+                normalize_rotation=pre_cfg.get("normalize_rotation", False),
             )
             self.label_names = self.bundle.label_names
-            self.accept_thresholds = self.bundle.accept_thresholds or {}
+            self.accept_thresholds = {
+                **(self.bundle.accept_thresholds or {}),
+                **self.runtime_accept_thresholds,
+            }
             logger.info("Đã nạp thành công StaticGesturePredictor artifact v%s", self.bundle.model_version)
         else:
-            self.preprocessor = LandmarkPreprocessor(mirror_left_hand=True, normalize_rotation=True)
+            self.preprocessor = LandmarkPreprocessor(mirror_left_hand=True, normalize_rotation=False)
             self.label_names = self.DEFAULT_LABELS
-            self.accept_thresholds = {}
+            self.accept_thresholds = self.runtime_accept_thresholds.copy()
             logger.warning("Không có model bundle được nạp. Predictor đang ở trạng thái chưa khởi tạo mô hình.")
 
     @staticmethod
@@ -112,6 +118,13 @@ class StaticGesturePredictor:
         Returns:
             StaticPrediction: Dự đoán đã áp dụng chính sách an toàn.
         """
+        if features_63d.shape != (63,):
+            raise ValueError(
+                f"Vector đặc trưng phải có kích thước (63,), nhận được {features_63d.shape}"
+            )
+        if not np.isfinite(features_63d).all():
+            raise ValueError("Vector đặc trưng chứa NaN hoặc Inf.")
+
         if not self.is_ready or self.bundle is None:
             return StaticPrediction(
                 label="NoAction",

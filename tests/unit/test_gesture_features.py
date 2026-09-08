@@ -1,7 +1,8 @@
 """Unit tests cho mô-đun gesture_features."""
 
-import pytest
 from types import SimpleNamespace
+
+import pytest
 
 from hand_gesture_controller.gesture_features import (
     calculate_distance_2d,

@@ -1,9 +1,8 @@
 """Mô-đun trích xuất đặc trưng chuyển động (Motion Features) độc lập tốc độ khung hình (FPS-independent)."""
 
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
 from typing import Optional, Tuple
-import numpy as np
 
 from ..schemas import HandObservation
 

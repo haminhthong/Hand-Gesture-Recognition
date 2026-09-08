@@ -2,8 +2,8 @@
 
 import os
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
+
 import yaml
 
 
@@ -60,6 +60,11 @@ class RuntimeConfig:
     history_horizon_ms: float = 250.0
     hand_loss_timeout_ms: float = 150.0
 
+    # Dynamic gestures
+    on_off_timeout_seconds: float = 1.5
+    sos_timeout_seconds: float = 1.5
+    enable_experimental_gestures: bool = False
+
     # Cursor EMA Filter
     cursor_tau: float = 0.08  # Thời hằng tau cho time-aware EMA
 
@@ -77,6 +82,27 @@ class RuntimeConfig:
     # UI & Rendering
     show_debug_hud: bool = True
     benchmark_output: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        """Kiểm tra cấu hình sớm để lỗi không trôi tới vòng lặp camera."""
+        if self.camera_index < 0:
+            raise ValueError("camera_index phải lớn hơn hoặc bằng 0.")
+        if self.target_width <= 0 or self.target_height <= 0:
+            raise ValueError("target_width và target_height phải lớn hơn 0.")
+        if not 0.0 < self.min_detection_confidence <= 1.0:
+            raise ValueError("min_detection_confidence phải nằm trong (0, 1].")
+        if not 0.0 < self.min_tracking_confidence <= 1.0:
+            raise ValueError("min_tracking_confidence phải nằm trong (0, 1].")
+        if self.max_num_hands < 1:
+            raise ValueError("max_num_hands phải lớn hơn 0.")
+        if not 0.0 <= self.default_accept_threshold <= 1.0:
+            raise ValueError("default_accept_threshold phải nằm trong [0, 1].")
+        if self.cursor_tau <= 0:
+            raise ValueError("cursor_tau phải lớn hơn 0.")
+        if self.on_off_timeout_seconds <= 0 or self.sos_timeout_seconds <= 0:
+            raise ValueError("Các timeout của dynamic FSM phải lớn hơn 0.")
+        if any(seconds < 0 for seconds in self.cooldowns.values()):
+            raise ValueError("Các giá trị cooldown không được âm.")
 
     @classmethod
     def from_yaml(cls, path: str) -> "RuntimeConfig":
@@ -127,6 +153,17 @@ class TrainingConfig:
     # Threshold Tuning Targets
     target_precision_actionable: float = 0.90
     max_false_action_rate: float = 0.05
+
+    def __post_init__(self) -> None:
+        """Kiểm tra các tham số huấn luyện trước khi đọc dataset."""
+        if self.cv_splits < 2:
+            raise ValueError("cv_splits phải lớn hơn hoặc bằng 2.")
+        if not self.labels:
+            raise ValueError("labels không được rỗng.")
+        if not 0.0 <= self.target_precision_actionable <= 1.0:
+            raise ValueError("target_precision_actionable phải nằm trong [0, 1].")
+        if not 0.0 <= self.max_false_action_rate <= 1.0:
+            raise ValueError("max_false_action_rate phải nằm trong [0, 1].")
 
     @classmethod
     def from_yaml(cls, path: str) -> "TrainingConfig":
