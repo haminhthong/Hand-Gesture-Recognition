@@ -97,6 +97,11 @@ class RuntimeConfig:
             raise ValueError("max_num_hands phải lớn hơn 0.")
         if not 0.0 <= self.default_accept_threshold <= 1.0:
             raise ValueError("default_accept_threshold phải nằm trong [0, 1].")
+        if any(
+            not 0.0 <= threshold <= 1.0
+            for threshold in self.accept_thresholds.values()
+        ):
+            raise ValueError("Các accept_thresholds phải nằm trong [0, 1].")
         if self.cursor_tau <= 0:
             raise ValueError("cursor_tau phải lớn hơn 0.")
         if self.on_off_timeout_seconds <= 0 or self.sos_timeout_seconds <= 0:

@@ -30,6 +30,9 @@ class DynamicGestureFSM:
             sos_timeout_seconds: Thời gian tối đa cho chuỗi SOS (thử nghiệm).
             enable_experimental_gestures: Bật cử chỉ thử nghiệm (SOS, Wave).
         """
+        if on_off_timeout_seconds <= 0 or sos_timeout_seconds <= 0:
+            raise ValueError("Các timeout của dynamic FSM phải lớn hơn 0.")
+
         self.on_off_timeout_seconds = on_off_timeout_seconds
         self.sos_timeout_seconds = sos_timeout_seconds
         self.enable_experimental_gestures = enable_experimental_gestures
@@ -138,8 +141,9 @@ class DynamicGestureFSM:
         # FSM Transition Logic
         # 1. Nhận diện chuỗi On/Off
         if self._is_on_off_start(landmarks, palm_size, finger_states):
-            self.current_fsm_state = "START_ONOFF"
-            self.state_start_time = now
+            if self.current_fsm_state != "START_ONOFF":
+                self.current_fsm_state = "START_ONOFF"
+                self.state_start_time = now
             return "Still"
 
         if self.current_fsm_state == "START_ONOFF":

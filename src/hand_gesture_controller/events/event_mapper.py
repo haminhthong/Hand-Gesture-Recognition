@@ -61,7 +61,7 @@ class GestureEventMapper:
         if cooldowns is None:
             return DEFAULT_COOLDOWNS.copy()
 
-        normalized: Dict[GestureEvent, float] = {}
+        normalized: Dict[GestureEvent, float] = DEFAULT_COOLDOWNS.copy()
         for raw_event, raw_seconds in cooldowns.items():
             if isinstance(raw_event, GestureEvent):
                 event = raw_event

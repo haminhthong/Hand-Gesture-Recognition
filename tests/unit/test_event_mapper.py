@@ -44,3 +44,11 @@ def test_event_mapper_accepts_yaml_style_cooldown_keys():
     assert mapper.map_gesture_to_event("Options", "Still", timestamp=1.9) == GestureEvent.NONE
     assert mapper.map_gesture_to_event("Unknown", "Still", timestamp=2.0) == GestureEvent.NONE
     assert mapper.map_gesture_to_event("Options", "Still", timestamp=2.1) == GestureEvent.CHANGE_COLOR
+
+
+def test_event_mapper_preserves_default_cooldowns_for_unspecified_events():
+    mapper = GestureEventMapper({"change_color": 1.0})
+
+    assert mapper.cooldowns[GestureEvent.CHANGE_COLOR] == 1.0
+    assert mapper.cooldowns[GestureEvent.TOGGLE_CANVAS] == 0.8
+    assert mapper.cooldowns[GestureEvent.EMERGENCY_SOS] == 1.0

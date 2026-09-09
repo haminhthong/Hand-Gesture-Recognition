@@ -3,6 +3,8 @@
 import pytest
 
 from hand_gesture_controller.app import HandGestureApp
+from hand_gesture_controller.config import RuntimeConfig
+from hand_gesture_controller.recognition.dynamic_fsm import DynamicGestureFSM
 from tools.collect_landmarks import collect_landmarks
 
 
@@ -34,3 +36,10 @@ def test_train_baseline_validation():
     with pytest.raises(FileNotFoundError, match="Không tìm thấy file dataset"):
         evaluate_baselines("data/raw/non_existent_dataset.csv")
 
+
+def test_runtime_and_dynamic_fsm_validation():
+    with pytest.raises(ValueError, match="accept_thresholds"):
+        RuntimeConfig(accept_thresholds={"Select": 1.1})
+
+    with pytest.raises(ValueError, match="timeout"):
+        DynamicGestureFSM(on_off_timeout_seconds=0)

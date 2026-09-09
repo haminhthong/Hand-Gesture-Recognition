@@ -363,7 +363,7 @@ python -m pytest -q
 python -m pytest --cov=src/hand_gesture_controller tests/
 ```
 
-Workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) chạy trên Ubuntu và Windows với Python `3.10–3.12`, cài dependency runtime/dev, compile source, Ruff, Mypy và Pytest coverage. Webcam không được yêu cầu trong CI; các test logic dùng dữ liệu tổng hợp/mocks.
+Workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) chạy trên Ubuntu và Windows với Python `3.10–3.12`, cài dependency runtime/dev, kiểm tra `pip check`, compile source, Ruff, Mypy và Pytest coverage. Webcam không được yêu cầu trong CI; các test logic dùng dữ liệu tổng hợp/mocks.
 
 ## 10. Báo cáo, telemetry và giới hạn diễn giải
 
