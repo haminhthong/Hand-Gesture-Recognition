@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![OpenCV](https://img.shields.io/badge/OpenCV-4.8%2B-5C3EE8?logo=opencv&logoColor=white)](https://opencv.org/)
 [![MediaPipe](https://img.shields.io/badge/MediaPipe-Hands-FF6F00?logo=google&logoColor=white)](https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker)
-[![NumPy](https://img.shields.io/badge/NumPy-1.24%2B-013243?logo=numpy&logoColor=white)](https://numpy.org/)
+[![NumPy](https://img.shields.io/badge/NumPy-1.24--2.2-013243?logo=numpy&logoColor=white)](https://numpy.org/)
 [![scikit--learn](https://img.shields.io/badge/scikit--learn-1.2%2B-F7931E?logo=scikit-learn&logoColor=white)](https://scikit-learn.org/)
 [![PyYAML](https://img.shields.io/badge/PyYAML-6%2B-2C3E50)](https://pyyaml.org/)
 [![PyInstaller](https://img.shields.io/badge/Build-PyInstaller-0F7B93)](https://pyinstaller.org/)
@@ -363,7 +363,7 @@ python -m pytest -q
 python -m pytest --cov=src/hand_gesture_controller tests/
 ```
 
-Workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) chạy trên Ubuntu và Windows với Python `3.10–3.12`, cài dependency runtime/dev, kiểm tra `pip check`, compile source, Ruff, Mypy và Pytest coverage. Webcam không được yêu cầu trong CI; các test logic dùng dữ liệu tổng hợp/mocks.
+Workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) chạy trên Ubuntu và Windows với Python `3.10–3.12`, cài dependency runtime/dev, kiểm tra `pip check`, compile source, Ruff, Mypy theo đúng phiên bản Python của từng matrix job và Pytest coverage. Webcam không được yêu cầu trong CI; các test logic dùng dữ liệu tổng hợp/mocks.
 
 ## 10. Báo cáo, telemetry và giới hạn diễn giải
 

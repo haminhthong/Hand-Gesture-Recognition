@@ -38,7 +38,7 @@ jobs:
         run: python -m ruff check .
 
       - name: Run Mypy Type Checker
-        run: python -m mypy src/
+        run: python -m mypy src/ --python-version ${{ matrix.python-version }}
 
       - name: Run Pytest Suite with Coverage
         run: python -m pytest --cov=src/hand_gesture_controller tests/
