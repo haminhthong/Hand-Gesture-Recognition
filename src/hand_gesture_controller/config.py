@@ -1,23 +1,19 @@
-"""Mô-đun cấu hình chứa các tham số hình học, runtime và training của hệ thống HCI."""
+"""Mô-đun cấu hình chứa các tham số hình học, runtime và huấn luyện của hệ thống HCI."""
 
 import os
 from dataclasses import asdict, dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import yaml
 
 
 @dataclass(frozen=True)
 class GestureThresholds:
-    """Dataclass tập trung các ngưỡng khoảng cách đã chuẩn hóa và thời gian chờ FSM."""
+    """Các ngưỡng khoảng cách hình học chuẩn hóa theo kích thước lòng bàn tay."""
 
     pinch_distance: float = 0.35
     select_distance: float = 0.60
     options_distance: float = 0.35
-    movement_distance: float = 0.12
-    sos_timeout_seconds: float = 1.5
-    wave_timeout_seconds: float = 2.0
-    wave_direction_changes: int = 3
     min_finger_extension_angle_deg: float = 140.0
 
 
@@ -26,7 +22,10 @@ DEFAULT_THRESHOLDS = GestureThresholds()
 
 @dataclass
 class RuntimeConfig:
-    """Cấu hình thực thi cho toàn bộ ứng dụng Hand Gesture HCI Controller."""
+    """Cấu hình thực thi cho ứng dụng Hand Gesture Controller."""
+
+    # Chế độ nhận diện ("svm" hoặc "rules")
+    mode: str = "svm"
 
     # Camera & Capture
     camera_index: int = 0
@@ -39,20 +38,9 @@ class RuntimeConfig:
     min_tracking_confidence: float = 0.6
     max_num_hands: int = 1
 
-    # Recognition (ML & Fallback)
-    model_path: str = "models/static_gesture_svm_v1.joblib"
-    fallback_to_rules: bool = True
-    default_accept_threshold: float = 0.60
-    accept_thresholds: Dict[str, float] = field(
-        default_factory=lambda: {
-            "Select": 0.65,
-            "Options": 0.70,
-            "Stop": 0.75,
-            "Peace": 0.65,
-            "Fist": 0.60,
-            "NoAction": 0.50,
-        }
-    )
+    # Static Classifier
+    model_path: str = "models/static_gesture_svm.joblib"
+    confidence_threshold: float = 0.65
 
     # Temporal Stabilization
     activation_dwell_ms: float = 120.0
@@ -62,11 +50,9 @@ class RuntimeConfig:
 
     # Dynamic gestures
     on_off_timeout_seconds: float = 1.5
-    sos_timeout_seconds: float = 1.5
-    enable_experimental_gestures: bool = False
 
-    # Cursor EMA Filter
-    cursor_tau: float = 0.08  # Thời hằng tau cho time-aware EMA
+    # Cursor Filter
+    cursor_tau: float = 0.08
 
     # Event Cooldowns (seconds)
     cooldowns: Dict[str, float] = field(
@@ -75,16 +61,16 @@ class RuntimeConfig:
             "delete_object": 0.5,
             "toggle_canvas": 0.8,
             "open_menu": 0.5,
-            "emergency_sos": 1.0,
         }
     )
 
-    # UI & Rendering
+    # UI HUD
     show_debug_hud: bool = True
-    benchmark_output: Optional[str] = None
 
     def __post_init__(self) -> None:
-        """Kiểm tra cấu hình sớm để lỗi không trôi tới vòng lặp camera."""
+        """Kiểm tra cấu hình hợp lệ."""
+        if self.mode not in ("svm", "rules"):
+            raise ValueError(f"Chế độ (--mode) phải là 'svm' hoặc 'rules', nhận được {self.mode!r}")
         if self.camera_index < 0:
             raise ValueError("camera_index phải lớn hơn hoặc bằng 0.")
         if self.target_width <= 0 or self.target_height <= 0:
@@ -95,19 +81,24 @@ class RuntimeConfig:
             raise ValueError("min_tracking_confidence phải nằm trong (0, 1].")
         if self.max_num_hands < 1:
             raise ValueError("max_num_hands phải lớn hơn 0.")
-        if not 0.0 <= self.default_accept_threshold <= 1.0:
-            raise ValueError("default_accept_threshold phải nằm trong [0, 1].")
-        if any(
-            not 0.0 <= threshold <= 1.0
-            for threshold in self.accept_thresholds.values()
-        ):
-            raise ValueError("Các accept_thresholds phải nằm trong [0, 1].")
+        if not 0.0 <= self.confidence_threshold <= 1.0:
+            raise ValueError("confidence_threshold phải nằm trong [0, 1].")
         if self.cursor_tau <= 0:
             raise ValueError("cursor_tau phải lớn hơn 0.")
-        if self.on_off_timeout_seconds <= 0 or self.sos_timeout_seconds <= 0:
-            raise ValueError("Các timeout của dynamic FSM phải lớn hơn 0.")
+        if self.on_off_timeout_seconds <= 0:
+            raise ValueError("on_off_timeout_seconds phải lớn hơn 0.")
         if any(seconds < 0 for seconds in self.cooldowns.values()):
             raise ValueError("Các giá trị cooldown không được âm.")
+
+    @property
+    def default_accept_threshold(self) -> float:
+        """Thuộc tính tương thích ngược cho confidence_threshold."""
+        return self.confidence_threshold
+
+    @property
+    def fallback_to_rules(self) -> bool:
+        """Thuộc tính tương thích ngược."""
+        return self.mode == "rules"
 
     @classmethod
     def from_yaml(cls, path: str) -> "RuntimeConfig":
@@ -116,6 +107,13 @@ class RuntimeConfig:
             return cls()
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
+        # Hỗ trợ migrate các trường cũ
+        if "default_accept_threshold" in data and "confidence_threshold" not in data:
+            data["confidence_threshold"] = data.pop("default_accept_threshold")
+        if "accept_thresholds" in data:
+            data.pop("accept_thresholds")
+        if "cooldowns" in data and "emergency_sos" in data["cooldowns"]:
+            data["cooldowns"].pop("emergency_sos")
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
     def to_yaml(self, path: str) -> None:
@@ -127,18 +125,17 @@ class RuntimeConfig:
 
 @dataclass
 class TrainingConfig:
-    """Cấu hình huấn luyện mô hình Calibrated RBF-SVM."""
+    """Cấu hình huấn luyện mô hình SVM cử chỉ tĩnh."""
 
     dataset_path: str = "data/raw/landmarks_dataset.csv"
-    manifest_path: str = "data/processed/manifest.json"
     splits_path: str = "data/processed/splits.json"
-    model_output_path: str = "models/static_gesture_svm_v1.joblib"
+    model_output_path: str = "models/static_gesture_svm.joblib"
 
     # Preprocessing
     mirror_left_hand: bool = True
     normalize_rotation: bool = True
 
-    # Target Vocabulary
+    # Vocabulary
     labels: List[str] = field(
         default_factory=lambda: [
             "Fist",
@@ -155,20 +152,14 @@ class TrainingConfig:
     c_candidates: List[float] = field(default_factory=lambda: [0.1, 1.0, 10.0, 50.0])
     gamma_candidates: List[str] = field(default_factory=lambda: ["scale", "auto", "0.01", "0.1"])
 
-    # Threshold Tuning Targets
-    target_precision_actionable: float = 0.90
-    max_false_action_rate: float = 0.05
+    confidence_threshold: float = 0.65
 
     def __post_init__(self) -> None:
-        """Kiểm tra các tham số huấn luyện trước khi đọc dataset."""
+        """Kiểm tra các tham số huấn luyện."""
         if self.cv_splits < 2:
             raise ValueError("cv_splits phải lớn hơn hoặc bằng 2.")
         if not self.labels:
             raise ValueError("labels không được rỗng.")
-        if not 0.0 <= self.target_precision_actionable <= 1.0:
-            raise ValueError("target_precision_actionable phải nằm trong [0, 1].")
-        if not 0.0 <= self.max_false_action_rate <= 1.0:
-            raise ValueError("max_false_action_rate phải nằm trong [0, 1].")
 
     @classmethod
     def from_yaml(cls, path: str) -> "TrainingConfig":

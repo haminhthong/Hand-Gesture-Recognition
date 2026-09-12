@@ -1,9 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('Image/hand_left', 'Image/hand_left'), ('Image/hand_right', 'Image/hand_right')]
+datas = [('configs', 'configs')]
 binaries = []
-hiddenimports = ['cv2', 'mediapipe']
+hiddenimports = ['cv2', 'mediapipe', 'sklearn', 'numpy', 'joblib', 'yaml']
 tmp_ret = collect_all('mediapipe')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 

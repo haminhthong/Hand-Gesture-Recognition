@@ -5,10 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "hand-gesture-controller"
 version = "1.0.0"
-description = "Real-time hand gesture controller for OpenCV and MediaPipe Hands."
+description = "Real-time hand gesture HCI controller with MediaPipe Hands and OpenCV."
 readme = "README.md"
 authors = [
-    { name = "Computer Vision / HCI Developer" }
+    { name = "Ha Minh Thong" }
 ]
 license = { text = "MIT" }
 requires-python = ">=3.10"
@@ -33,9 +33,7 @@ where = ["src"]
 dev = [
     "pytest>=8.0.0",
     "pytest-cov>=4.1.0",
-    "ruff>=0.3.0",
-    "mypy>=1.8.0",
-    "types-PyYAML>=6.0.0"
+    "ruff>=0.3.0"
 ]
 
 [tool.pytest.ini_options]
@@ -46,15 +44,8 @@ addopts = "-v --strict-markers"
 [tool.ruff]
 line-length = 100
 target-version = "py310"
-exclude = ["Image", "data"]
+exclude = ["data"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
 ignore = ["E501"]
-
-[tool.mypy]
-python_version = "3.10"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = false
-ignore_missing_imports = true

@@ -1,7 +1,4 @@
-"""File tương thích khởi chạy ứng dụng Hand Gesture Controller.
-
-Chuyển hướng lời gọi đến src/hand_gesture_controller/app.py.
-"""
+"""Điểm khởi chạy chính (entrypoint) của ứng dụng Hand Gesture HCI Controller."""
 
 import os
 import sys

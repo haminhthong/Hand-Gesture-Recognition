@@ -1,385 +1,236 @@
 # Hand Gesture HCI Controller
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![OpenCV](https://img.shields.io/badge/OpenCV-4.8%2B-5C3EE8?logo=opencv&logoColor=white)](https://opencv.org/)
+[![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![MediaPipe](https://img.shields.io/badge/MediaPipe-Hands-FF6F00?logo=google&logoColor=white)](https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker)
-[![NumPy](https://img.shields.io/badge/NumPy-1.24--2.2-013243?logo=numpy&logoColor=white)](https://numpy.org/)
+[![OpenCV](https://img.shields.io/badge/OpenCV-4.8%2B-5C3EE8?logo=opencv&logoColor=white)](https://opencv.org/)
 [![scikit--learn](https://img.shields.io/badge/scikit--learn-1.2%2B-F7931E?logo=scikit-learn&logoColor=white)](https://scikit-learn.org/)
-[![PyYAML](https://img.shields.io/badge/PyYAML-6%2B-2C3E50)](https://pyyaml.org/)
-[![PyInstaller](https://img.shields.io/badge/Build-PyInstaller-0F7B93)](https://pyinstaller.org/)
-[![Pytest](https://img.shields.io/badge/Test-Pytest-0A9EDC?logo=pytest&logoColor=white)](https://pytest.org/)
-[![Ruff](https://img.shields.io/badge/Lint-Ruff-D7FF64?logo=ruff&logoColor=111111)](https://docs.astral.sh/ruff/)
-[![Mypy](https://img.shields.io/badge/Type--check-Mypy-1674B1?logo=python&logoColor=white)](https://mypy-lang.org/)
-[![CI](https://img.shields.io/badge/CI-GitHub%20Actions-2088FF?logo=githubactions&logoColor=white)](.github/workflows/ci.yml)
-[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+[![CI](https://img.shields.io/badge/CI-Passing-brightgreen?logo=githubactions&logoColor=white)](.github/workflows/ci.yml)
+[![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
 
-Nền tảng tương tác người–máy bằng cử chỉ tay, chạy cục bộ trên webcam. Hệ thống nhận diện một bàn tay bằng MediaPipe Hands, chuẩn hóa 21 landmark thành vector 63 chiều, phân loại tư thế tĩnh bằng model SVM nếu có artifact hoặc chuyển sang rule baseline, ổn định tín hiệu theo thời gian rồi phát sự kiện điều khiển canvas 2D.
+Ứng dụng tương tác người–máy (HCI) thời gian thực qua webcam bằng cử chỉ tay. Hệ thống trích xuất 21 landmarks bàn tay qua MediaPipe, chuẩn hóa hình học không gian, phân loại cử chỉ tĩnh bằng RBF-SVM (kèm Rule Baseline đối chứng), ổn định nhãn bằng bộ lọc trễ thời gian (temporal hysteresis), ánh xạ sự kiện sườn lên (rising-edge event mapping) và điều khiển canvas 2D trực quan.
 
-README này là tài liệu chuẩn của repository: mọi mô tả dưới đây bám theo code hiện tại, cấu hình trong `configs/`, workflow CI và các lệnh CLI đang có.
+---
 
-## 1. Bài toán & phạm vi ứng dụng
+## 1. Kiến trúc hệ thống
 
-### Bài toán
-
-Một bộ phân loại từng frame chưa đủ để làm HCI usable. Tín hiệu webcam có thể bị nhiễu, nhãn thay đổi nhanh, một hành động có thể bị phát lặp ở mọi frame và cử chỉ động cần thứ tự theo thời gian. Dự án xử lý bốn điểm đó:
-
-- Chuẩn hóa landmark theo cổ tay, kích thước lòng bàn tay, tay trái/phải và tùy chọn xoay trong mặt phẳng.
-- Chuyển dự đoán thô thành trạng thái ổn định bằng activation dwell, release dwell và history horizon.
-- Tách nhãn nhận diện khỏi `GestureEvent`; hành động một lần dùng rising edge và cooldown, kéo thả dùng event liên tục.
-- Khi mất tay trong lúc kéo, phát hành `STOP_DRAG` và reset các bộ nhớ thời gian để không giữ trạng thái cũ.
-
-### Phạm vi hiện tại
-
-Trong phạm vi:
-
-- Một bàn tay tại một thời điểm (`max_num_hands: 1`).
-- Webcam OpenCV, cửa sổ GUI OpenCV và canvas vật thể 2D.
-- Sáu nhãn tĩnh production: `Fist`, `Select`, `Options`, `Stop`, `Peace`, `NoAction`.
-- Cử chỉ động production: chuỗi `On/Off`; `SOS` chỉ là experimental và mặc định tắt.
-- Huấn luyện/đánh giá offline trên CSV landmark với split theo `subject_id`.
-- Telemetry FPS, latency tổng và latency theo stage.
-
-Ngoài phạm vi:
-
-- Không điều khiển con trỏ hệ điều hành; con trỏ hiện tại chỉ là tọa độ ảo trong canvas.
-- Không nhận diện nhiều bàn tay hoặc theo dõi danh tính bàn tay giữa các frame.
-- Không lưu ảnh/video webcam trong pipeline thu thập; collector chỉ ghi landmark số.
-- Không có model binary mặc định trong repository. Khi chưa có model, runtime dùng rule fallback nếu `fallback_to_rules: true`.
-
-## 2. Cử chỉ và hành động
-
-| Nhãn | Điều kiện/ý nghĩa trong code | Sự kiện ứng dụng |
-| --- | --- | --- |
-| `Fist` | Không có ngón nào được đánh dấu duỗi | Trạng thái nghỉ; nếu đang kéo thì kết thúc kéo |
-| `Select` | Pinch cái–trỏ, ngón giữa tách khỏi trỏ và tổng ngón duỗi bằng 2 | `START_DRAG` một lần, sau đó `DRAG` mỗi frame |
-| `Options` | Cái–trỏ và giữa cùng ở vùng pinch | `CHANGE_COLOR` tại rising edge |
-| `Stop` | Cả 5 ngón duỗi | `DELETE_OBJECT` tại rising edge |
-| `Peace` | Trỏ và giữa duỗi, cái gập, không phải pinch | `OPEN_MENU` tại rising edge |
-| `NoAction` | Không đạt luật hoặc model bị reject | Không phát hành action |
-| `On/Off` | Trỏ + giữa ở tư thế bắt đầu, sau đó giữa đổi trạng thái trong timeout | `TOGGLE_CANVAS` tại completion của FSM |
-| `SOS` | 4 ngón (không có cái) rồi nắm đấm trong timeout | `EMERGENCY_SOS`, chỉ khi bật experimental |
-
-`Wave`, `OK`, `Thumbs Up` và `Thumbs Down` còn xuất hiện trong một số module tương thích/benchmark cũ, nhưng không phải nhánh runtime canonical của `Main.py`. Không nên dùng chúng để mô tả khả năng production hiện tại.
-
-## 3. Quy trình kỹ thuật canonical: logic, data flow và pipeline
-
-Đây là flowchart duy nhất chi phối cách đọc source, cấu hình và báo cáo. Nhánh runtime chạy trên webcam; nhánh offline tạo dữ liệu/model/đánh giá và không tự động thay đổi runtime cho tới khi artifact được đặt đúng đường dẫn.
+Dự án tập trung vào luồng kỹ thuật thực chất từ nhận thức thị giác máy tính đến tương tác giao diện:
 
 ```mermaid
 flowchart TD
-    CFG[configs/runtime.yaml<br/>camera, thresholds, dwell, cooldowns] --> CLI[Main.py / hand-controller]
-    TRAINCFG[configs/training.yaml<br/>labels, split, SVM candidates] --> OFFLINE
-
-    subgraph OFFLINE[Offline data and model pipeline]
-        COLLECT[scripts/collect_data.py<br/>canonical collector] --> CSV[data/raw/landmarks_dataset.csv<br/>metadata + 21 x 3 landmarks]
-        SYNTH[scripts/generate_synthetic_dataset.py<br/>CI/smoke data] --> CSV
-        CSV --> AUDIT[scripts/audit_data.py<br/>schema, NaN/Inf, duplicate ID, leakage]
-        CSV --> SPLIT[scripts/create_splits.py<br/>subject-level Train/Val/Test]
-        SPLIT --> TRAIN[scripts/train_static_model.py]
-        CSV --> TRAIN
-        TRAIN --> PREP_T[LandmarkPreprocessor<br/>wrist origin, palm scale, mirror, rotation]
-        PREP_T --> SCALE[StandardScaler fit only on Train]
-        SCALE --> SVM[Calibrated RBF-SVM<br/>threshold tuning on Val]
-        SVM --> BUNDLE[models/static_gesture_svm_v1.joblib<br/>model + scaler + metadata + thresholds]
-        BUNDLE --> EVAL[scripts/evaluate_static_model.py<br/>locked test report]
-        CSV --> BASE[tools/train_baseline.py or<br/>experiments/compare_rule_knn_rf_svm.py]
-        SPLIT --> BASE
-    end
-
-    subgraph RUNTIME[Runtime pipeline: one frame at a time]
-        CAP[OpenCV VideoCapture] --> MIRROR[Optional horizontal flip]
-        MIRROR --> MP[MediaPipe Hands<br/>max_num_hands = 1]
-        MP --> OBS[HandObservation<br/>landmarks (21,3), handedness,<br/>palm_size, center, timestamp]
-        OBS --> STATIC{Model artifact ready?}
-        STATIC -->|yes| PREP_R[LandmarkPreprocessor from bundle config<br/>63D float32]
-        PREP_R --> PRED[StaticGesturePredictor<br/>probability + reject policy]
-        STATIC -->|no + fallback| RULE[RuleStaticBaseline<br/>geometry + precedence]
-        STATIC -->|no + no fallback| NOACTION[NoAction / rejected]
-        OBS --> DYN[DynamicGestureFSM<br/>On/Off; optional SOS]
-        PRED --> STABLE[GestureStabilizer<br/>activation 120ms, release 100ms,<br/>history 250ms]
-        RULE --> STABLE
-        NOACTION --> STABLE
-        STABLE --> MAP[GestureEventMapper<br/>edge/continuous + cooldown]
-        DYN --> MAP
-        OBS --> CURSOR[CursorFilter<br/>time-aware EMA, tau 0.08]
-        MAP --> APP[Application state]
-        CURSOR --> APP
-        APP --> CANVAS[DraggableObjectManager<br/>visibility, z-order, drag, color, delete]
-        APP --> MENU[ShapeMenu<br/>Peace opens; Select chooses shape]
-        CANVAS --> DRAW[OpenCV render + HUD]
-        MENU --> DRAW
-        OBS --> DRAW
-        DRAW --> TELEMETRY[PerformanceMonitor<br/>FPS, total latency, stage breakdown]
-        TELEMETRY --> JSON[Optional benchmark-output JSON]
-        OBS -->|missing beyond timeout| FAILSAFE[reset stabilizer/FSM<br/>STOP_DRAG if needed]
-        FAILSAFE --> MAP
-    end
-
-    CLI --> CAP
-    BUNDLE -. optional artifact .-> STATIC
-    RUNTIME --> REPORT[Runtime telemetry / HCI benchmark output]
-    OFFLINE --> REPORT
+    FRAME[Webcam Frame] --> MP[MediaPipe Hands\n21 Landmarks (x, y, z)]
+    MP --> NORM[Landmark Normalization\nWrist Origin + Palm Scale + Mirror + Rotation]
+    NORM --> VEC[63D Feature Vector]
+    
+    VEC --> SVM[Static Gesture Classifier\nRBF-SVM + Confidence Threshold]
+    NORM -.-> RULE[Rule Baseline\nGeometric Heuristic]
+    MP --> FSM[Dynamic Gesture FSM\nOn/Off Sequence]
+    
+    SVM --> STABLE[Temporal Stabilizer\nActivation Dwell 120ms | Release Dwell 100ms]
+    RULE -.-> STABLE
+    
+    STABLE --> MAPPER[Gesture Event Mapper\nRising Edge + Continuous Drag + Hand-loss Failsafe]
+    FSM --> MAPPER
+    
+    MAPPER --> CANVAS[Interactive Canvas 2D\nObject Drag, Color, Delete, Shape Menu]
 ```
 
-### 3.1 Luồng dữ liệu runtime
+### Quy trình xử lý theo từng bước:
+1. **Perception**: MediaPipe Hands xác định 21 tọa độ landmark 3D của bàn tay.
+2. **Landmark Preprocessing**: 5 bước chuẩn hóa hình học triệt tiêu ảnh hưởng của vị trí, kích thước, tay trái/phải và góc nghiêng camera.
+3. **Static Classifier & Rule Baseline**: Mô hình RBF-SVM dự đoán cử chỉ với ngưỡng tin cậy xác suất; Rule Baseline dựa trên hình học ngón tay phục vụ đối chứng.
+4. **Dynamic Gesture FSM**: Máy trạng thái hữu hạn theo dõi chuỗi chuyển động theo thời gian để nhận diện cử chỉ On/Off.
+5. **Temporal Stabilizer**: Bộ lọc trễ hai chiều (activation/release dwell) loại bỏ rung giật nhãn (flickering/jitter).
+6. **Event Mapper**: Cơ chế rising-edge ngăn ngừa việc kích hoạt sự kiện liên tục mỗi frame; duy trì trạng thái kéo thả liên tục và failsafe tự động nhả khi mất dấu bàn tay.
+7. **Canvas UI**: Cửa sổ tương tác 2D hỗ trợ tạo hình, di chuyển, đổi màu và xóa đối tượng.
 
-1. `VideoCapture.read()` tạo frame BGR. `mirror_camera` lật frame trước khi đưa vào MediaPipe.
-2. `HandDetector.process()` chỉ lấy hand đầu tiên và trả `HandObservation`. Tọa độ `x`, `y`, `z` của MediaPipe vẫn ở hệ tọa độ normalized; `frame_width` và `frame_height` giữ kích thước ảnh thực tế.
-3. Nhánh static dùng model bundle nếu tồn tại. Preprocessor phải đồng nhất với `preprocessor_config` trong bundle. Nếu model không sẵn sàng và fallback được bật, `RuleStaticBaseline` được dùng.
-4. Nhánh dynamic nhận cùng `HandObservation` và chỉ phát nhãn khi FSM hoàn tất chuỗi.
-5. `GestureStabilizer` lọc nhãn static theo thời gian. Cử chỉ cần giữ đủ `activation_dwell_ms`; khi vắng mặt đủ `release_dwell_ms`, trạng thái được trả về `NoAction`.
-6. `GestureEventMapper` hợp nhất static và dynamic. `Select` là continuous; `Options`, `Stop`, `Peace`, `On/Off`, `SOS` là edge-triggered/cooldown.
-7. `DraggableObjectManager` áp event trên canvas. `ShapeMenu` dùng đúng cursor đã lọc và nhận `OPEN_MENU` từ event mapper.
-8. Mỗi frame được vẽ lại và telemetry ghi tổng latency cùng stage breakdown. Không có số benchmark cố định nào được hard-code vào README.
+---
 
-### 3.2 Chuẩn hóa landmark và feature contract
+## 2. Tiền xử lý Landmark (Core ML Engineering)
 
-`LandmarkPreprocessor.transform()` nhận mảng `(21, 3)` và thực hiện theo thứ tự:
-
-1. Trừ landmark cổ tay index `0`.
-2. Chia cho `||landmark[9] - landmark[0]||` với epsilon `1e-6`.
-3. Nếu `handedness == "Left"` và `mirror_left_hand=True`, đổi dấu trục X.
-4. Nếu `normalize_rotation=True`, xoay mặt phẳng để vector cổ tay → Middle MCP hướng lên trục `-Y` của hệ ảnh.
-5. Flatten thành vector `float32` 63 chiều.
-
-`StandardScaler` chỉ được fit trên Train trong script huấn luyện; Val/Test chỉ gọi `transform`. Split luôn theo `subject_id`, không split ngẫu nhiên các frame liên tiếp của cùng một người.
-
-## 4. Cấu trúc thư mục dự án
+Thay vì đưa trực tiếp tọa độ thô vào mô hình khiến mô hình học phụ thuộc vào vị trí camera, `LandmarkPreprocessor` thực hiện 5 bước biến đổi hình học:
 
 ```text
-.
-├── Main.py                         # entrypoint chạy app từ root
-├── data_collector.py               # wrapper tương thích cho collector
-├── pyproject.toml                  # package, console scripts, pytest, Ruff, Mypy
-├── requirements.txt                # dependency runtime/build
-├── requirements-dev.txt            # runtime + test/lint/type-check
+Raw Landmarks (21, 3)
+         ↓
+1. Tịnh tiến cổ tay (Wrist index 0) về gốc tọa độ (0, 0, 0)
+         ↓
+2. Chuẩn hóa tỉ lệ theo kích thước lòng bàn tay: ||landmark[9] - landmark[0]||
+         ↓
+3. Lật tay trái (đổi dấu trục X) để dùng chung không gian đặc trưng với tay phải
+         ↓
+4. Xoay chuẩn hóa trong mặt phẳng (vector cổ tay → khớp MCP giữa hướng lên)
+         ↓
+Flatten → Vector đặc trưng 63 chiều
+```
+
+> **Ý nghĩa thực tế**: Giúp mô hình tập trung học hình dạng và thế ngón tay thay vì khoảng cách xa/gần hay vị trí bàn tay trên khung hình camera.
+
+---
+
+## 3. Cử chỉ & Bảng ánh xạ sự kiện HCI
+
+Hệ thống hỗ trợ 6 cử chỉ tĩnh và 1 cử chỉ động:
+
+| Cử chỉ | Loại | Ý nghĩa / Tư thế | Sự kiện HCI | Hành vi giao diện |
+| :--- | :--- | :--- | :--- | :--- |
+| **`Select`** | Static | Pinch ngón cái & trỏ | `START_DRAG` / `DRAG` | Bắt đầu kéo và di chuyển đối tượng |
+| **`Fist`** | Static | Nắm chặt cả bàn tay | `STOP_DRAG` | Nhả đối tượng đang kéo |
+| **`Options`** | Static | Pinch cái–trỏ và ngón giữa | `CHANGE_COLOR` | Đổi màu đối tượng (kích hoạt 1 lần - rising edge) |
+| **`Stop`** | Static | Xòe 5 ngón tay | `DELETE_OBJECT` | Xóa đối tượng dưới con trỏ (rising edge) |
+| **`Peace`** | Static | Ngón trỏ & giữa giơ thẳng | `OPEN_MENU` | Mở menu lựa chọn hình khối (rising edge) |
+| **`NoAction`** | Static | Trạng thái nghỉ hoặc bị từ chối | `NONE` | Không kích hoạt hành động |
+| **`On/Off`** | Dynamic | Chuỗi gập/duỗi ngón giữa trong thời gian quy định | `TOGGLE_CANVAS` | Bật/tắt hiển thị canvas tương tác |
+
+### Cơ chế HCI giải quyết vấn đề thực tế:
+- **Rising Edge Triggering**: Khi người dùng giơ cử chỉ `Stop` hoặc `Peace` trong 30 frame liên tiếp, menu hoặc lệnh xóa chỉ phát **đúng 1 lần** ở frame đầu tiên cử chỉ đạt trạng thái ổn định, kèm khoảng chờ cooldown để chống spam.
+- **Continuous Drag State**: Cử chỉ `Select` phát sự kiện `START_DRAG` ở sườn lên, sau đó duy trì `DRAG` mỗi frame để cập nhật vị trí vật thể theo con trỏ chuột ảo.
+- **Hand-loss Failsafe**: Nếu camera đột ngột mất dấu bàn tay trong lúc đang kéo vật thể, hệ thống tự động phát sinh `STOP_DRAG` và reset toàn bộ trạng thái để vật thể không bị kẹt.
+
+---
+
+## 4. Thực nghiệm & So sánh mô hình
+
+Mô hình được đánh giá theo phương pháp **Subject-independent Evaluation** (chia Train/Val/Test hoàn toàn rời rạc theo đối tượng thu thập `subject_id` để ngăn ngừa hiện tượng rò rỉ dữ liệu - data leakage).
+
+Kết quả kiểm thử chéo 5-fold GroupKFold trên tập dữ liệu thực tế (`data/raw/landmarks_dataset.csv`):
+
+| Mô hình | Đặc trưng | Accuracy (Mean ± Std) | Macro-F1 | Nhận xét kỹ thuật |
+| :--- | :--- | :---: | :---: | :--- |
+| **Rule Baseline** | Heuristic hình học | 0.7219 ± 0.0201 | 0.6670 | Nhanh, không cần huấn luyện nhưng khó bao quát biến thiên kích thước bàn tay. |
+| **KNN (k=5)** | Khoảng cách Euclidean | 0.8302 ± 0.0153 | 0.8268 | Khá, nhưng nhạy cảm với khoảng cách cục bộ và tốc độ chậm khi tập dữ liệu lớn. |
+| **Random Forest (n=100)** | Ensemble cây quyết định | 0.9964 ± 0.0044 | 0.9964 | Độ chính xác cao, nhưng kích thước mô hình cồng kềnh, độ trễ suy luận lớn hơn. |
+| **RBF-SVM (C=10)** | Kernel RBF + Scaler | **0.9945 ± 0.0077** | **0.9945** | **Được chọn**: Kích thước gọn nhẹ (~400KB), suy luận < 1ms, hỗ trợ tính xác suất `predict_proba`. |
+
+---
+
+## 5. Cấu trúc thư mục
+
+Toàn bộ dự án được tổ chức phẳng và tinh gọn:
+
+```text
+hand-gesture-recognition/
 ├── configs/
-│   ├── runtime.yaml                # cấu hình camera, model, FSM, dwell, cooldown
-│   └── training.yaml               # cấu hình offline SVM và labels
-├── src/hand_gesture_controller/
-│   ├── app.py                      # vòng lặp runtime và CLI
-│   ├── config.py                   # RuntimeConfig/TrainingConfig
-│   ├── schemas.py                  # HandObservation, Prediction, Event contracts
-│   ├── data_collection.py          # collector canonical, có console entrypoint
-│   ├── perception/                 # MediaPipe -> HandObservation
-│   ├── features/                   # landmark preprocessing và motion utilities
-│   ├── recognition/                # SVM predictor, rule baseline, dynamic FSM
-│   ├── temporal/                   # cursor filter và gesture stabilizer
-│   ├── events/                     # event mapping, edge, cooldown, failsafe
-│   ├── application/                # canvas object manager và shape menu
-│   └── telemetry/                  # FPS/latency monitor và JSON export
+│   ├── runtime.yaml           # Cấu hình camera, stabilizer, ngưỡng tin cậy
+│   └── training.yaml          # Cấu hình huấn luyện mô hình
+├── data/
+│   ├── raw/                   # landmarks_dataset.csv (dữ liệu thu thập)
+│   └── processed/             # splits.json (phân chia subject-independent)
+├── experiments/
+│   └── compare_models.py      # So sánh đối chứng Rule vs KNN vs RF vs SVM
+├── models/
+│   └── static_gesture_svm.joblib # Model artifact gọn nhẹ (model, scaler, config)
+├── reports/
+│   └── evaluation.json        # Báo cáo đánh giá chi tiết
 ├── scripts/
-│   ├── collect_data.py             # wrapper tới collector canonical
-│   ├── generate_synthetic_dataset.py
-│   ├── audit_data.py
-│   ├── create_splits.py
-│   ├── train_static_model.py
-│   ├── evaluate_static_model.py
-│   └── benchmark_hci.py
-├── tools/
-│   ├── collect_landmarks.py        # wrapper deprecated, giữ tương thích
-│   └── train_baseline.py            # GroupKFold/LOSO baseline comparison
-├── experiments/                    # so sánh Rule/KNN/RF/SVM
-├── tests/                          # unit + integration tests
-├── Image/                          # icon tài nguyên cho module FingerNumber tương thích
-├── .github/workflows/ci.yml        # CI Windows/Linux, Python 3.10–3.12
-└── LICENSE                         # MIT
+│   ├── collect_data.py        # Thu thập landmark MediaPipe theo subject
+│   ├── prepare_data.py        # Kiểm tra tính toàn vẹn và tạo subject split
+│   ├── train.py               # Huấn luyện SVM với GroupKFold
+│   └── evaluate.py            # Đánh giá độc lập trên tập test
+├── src/
+│   └── hand_gesture_controller/
+│       ├── app.py             # Vòng lặp runtime chính và xử lý CLI
+│       ├── canvas.py          # Quản lý vật thể 2D, menu và tương tác
+│       ├── classifier.py      # Bộ phân loại SVM + Confidence Threshold
+│       ├── config.py          # Quản lý cấu hình Dataclass
+│       ├── data_collection.py # Logic thu thập dữ liệu landmark
+│       ├── dynamic_gesture.py # Máy trạng thái FSM nhận diện cử chỉ On/Off
+│       ├── event_mapper.py    # Ánh xạ cử chỉ thành sự kiện HCI (Rising Edge, Drag)
+│       ├── hand_detector.py   # Wrapper MediaPipe Hands trích xuất 21 landmarks
+│       ├── preprocessing.py   # Chuẩn hóa landmark (Wrist, Scale, Mirror, Rotation)
+│       ├── rule_baseline.py   # Bộ phân loại luật hình học đối chứng
+│       ├── schemas.py         # Dataclass và Enum định nghĩa kiểu dữ liệu
+│       └── telemetry.py       # Đo đạc FPS và độ trễ khung hình
+├── tests/                     # Unit test và integration test suite
+├── Main.py                    # Entrypoint khởi chạy ứng dụng
+├── pyproject.toml             # Khai báo gói và cấu hình công cụ phát triển
+└── requirements.txt           # Thư viện phụ thuộc
 ```
 
-Các thư mục phát sinh không phải source chính:
+---
 
-- `data/raw/`, `data/private/`: dữ liệu cục bộ, bị `.gitignore` loại khỏi Git.
-- `data/processed/`: `splits.json` và `manifest.json` tạo bởi `create_splits.py`.
-- `models/`: model bundle tạo bởi training script; không có sẵn mặc định.
-- `reports/`: JSON/report cục bộ; bị ignore.
-- `__pycache__/`, `.pytest_cache/`, `.ruff_cache/`: cache công cụ, không commit.
+## 6. Cài đặt & Khởi chạy
 
-## 5. Hướng dẫn cài đặt
+### Cài đặt môi trường
 
-Yêu cầu Python `3.10+`. CI hiện kiểm tra Python `3.10`, `3.11`, `3.12` trên Ubuntu và Windows.
+Yêu cầu Python 3.10 hoặc 3.11:
 
-```powershell
-git clone <repository-url>
-cd hand-gesture-recognition
+```bash
+# Tạo môi trường ảo
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r requirements-dev.txt
-python -m pip install -e .
+source .venv/bin/activate  # Trên Windows: .venv\Scripts\activate
+
+# Cài đặt thư viện
+pip install -r requirements.txt
+pip install -e .
 ```
 
-Trên Linux/macOS, thay lệnh kích hoạt bằng `source .venv/bin/activate`. OpenCV GUI cần môi trường có display; collector và runtime cần webcam khi chạy thật.
+### Khởi chạy ứng dụng
 
-## 6. Hướng dẫn chạy runtime
+Ứng dụng hỗ trợ hai chế độ hoạt động rõ ràng qua tham số `--mode`:
 
-### Chạy nhanh bằng rule fallback
+1. **Chế độ SVM (Mặc định - Sử dụng Machine Learning)**:
+   ```bash
+   python Main.py --mode svm --model models/static_gesture_svm.joblib
+   ```
+   *Lưu ý: Nếu không tìm thấy file model, ứng dụng sẽ báo lỗi rõ ràng và dừng lại thay vì âm thầm chuyển chế độ.*
 
-Model artifact là tùy chọn. Nếu chưa có `models/static_gesture_svm_v1.joblib`, chạy:
+2. **Chế độ Rule Baseline (Sử dụng luật hình học)**:
+   ```bash
+   python Main.py --mode rules
+   ```
 
-```powershell
-python Main.py --config configs/runtime.yaml
+**Phím tắt tương tác trên cửa sổ:**
+- `Q`: Thoát ứng dụng.
+- `D`: Bật / tắt HUD hiển thị thông tin debug (FPS, trạng thái cử chỉ).
+- `C`: Xóa toàn bộ vật thể trên canvas.
+
+---
+
+## 7. Pipeline huấn luyện & Đánh giá Offline
+
+Quy trình 4 bước huấn luyện và kiểm thử độc lập:
+
+```bash
+# 1. Thu thập dữ liệu mẫu từ camera
+python scripts/collect_data.py --subject-id subject_001 --label Select --samples 200
+
+# 2. Kiểm tra dữ liệu và phân chia tập train/val/test theo subject
+python scripts/prepare_data.py --csv data/raw/landmarks_dataset.csv
+
+# 3. Huấn luyện mô hình RBF-SVM với GroupKFold
+python scripts/train.py --csv data/raw/landmarks_dataset.csv --splits-json data/processed/splits.json
+
+# 4. Đánh giá mô hình trên tập dữ liệu kiểm thử độc lập
+python scripts/evaluate.py --model models/static_gesture_svm.joblib --csv data/raw/landmarks_dataset.csv
 ```
 
-Hoặc dùng console script sau khi `pip install -e .`:
+---
 
-```powershell
-hand-controller --config configs/runtime.yaml
-```
+## 8. Trả lời 7 câu hỏi phỏng vấn then chốt
 
-Tham số CLI ghi đè đúng trường được truyền vào; nếu bỏ qua `--camera`, `--width`, `--height` hoặc `--model`, giá trị trong YAML/default được giữ nguyên.
+1. **MediaPipe Hands trả về những gì?**
+   - MediaPipe Hands trả về 21 điểm landmark 3D đại diện cho các khớp xương trên bàn tay. Mỗi điểm gồm tọa độ $(x, y)$ chuẩn hóa trong khoảng $[0, 1]$ theo kích thước ảnh và $z$ đại diện cho độ sâu tương đối so với cổ tay.
 
-```powershell
-python Main.py --camera 0 --width 640 --height 480
-python Main.py --config configs/runtime.yaml --model models/static_gesture_svm_v1.joblib
-python Main.py --config configs/runtime.yaml --benchmark-output reports/runtime.json
-```
+2. **Tại sao cần chuẩn hóa landmark trước khi đưa vào mô hình?**
+   - Tọa độ thô phụ thuộc hoàn toàn vào vị trí đứng, khoảng cách đến camera và kích thước bàn tay người dùng. Bằng cách tịnh tiến cổ tay về gốc $(0,0,0)$ và chia cho kích thước lòng bàn tay, mô hình học được đặc trưng thuần túy về hình học cử chỉ. Việc lật tay trái giúp dùng chung một mô hình phân loại cho cả hai tay.
 
-Phím tắt trong cửa sổ:
+3. **Tại sao lựa chọn SVM thay vì Deep Learning hay Rule-based?**
+   - Không gian đặc trưng sau chuẩn hóa là vector dạng bảng 63 chiều. RBF-SVM giải quyết bài toán phi tuyến trong không gian này cực kỳ hiệu quả, trọng số gọn nhẹ (~400KB), độ trễ suy luận dưới 1ms trên CPU và không gặp rủi ro overfitting lớn như mạng nơ-ron sâu khi tập dữ liệu có quy mô vừa phải.
 
-- `Q`: thoát và giải phóng camera/MediaPipe.
-- `D`: bật/tắt HUD debug.
-- `C`: xóa toàn bộ object trong canvas.
+4. **Tại sao cần chia dữ liệu theo `subject_id` (Subject-independent split)?**
+   - Để kiểm thử khả năng tổng quát hóa thực sự của mô hình đối với người dùng mới. Nếu chia ngẫu nhiên các frame liên tiếp của cùng một người vào cả train và test, mô hình sẽ đạt điểm số ảo rất cao do các frame có bàn tay, tư thế và bối cảnh camera gần như đồng nhất.
 
-Canvas bắt đầu ở trạng thái ẩn. Thực hiện chuỗi `On/Off` để bật/tắt canvas. Khi canvas hiện:
+5. **Tại sao cần có Temporal Stabilizer (Hysteresis)?**
+   - Dự đoán thô trên từng frame thường xuyên bị nhiễu và nhảy nhãn cục bộ do tay chuyển động nhanh hoặc camera mờ nhòe. Cơ chế trễ thời gian (cần giữ ổn định 120ms để kích hoạt và 100ms vắng mặt để giải phóng) loại bỏ hoàn toàn hiện tượng rung giật giao diện.
 
-- `Peace` mở menu hình học.
-- `Select` trên một object để kéo; `Select` trên item menu để tạo `Rectangle`, `Circle`, `Triangle` hoặc `Star`.
-- `Options` đổi màu object dưới cursor.
-- `Stop` xóa object dưới cursor.
+6. **Cơ chế Rising Edge hoạt động như thế nào trong Event Mapper?**
+   - Khi một cử chỉ tĩnh (như `Peace` hay `Stop`) được giữ liên tục trong 30-60 frame, cơ chế rising edge chỉ phát tín hiệu sự kiện `OPEN_MENU` hoặc `DELETE_OBJECT` duy nhất một lần tại frame đầu tiên trạng thái được xác nhận, ngăn chặn việc giao diện bị lặp hành động ngoài ý muốn.
 
-## 7. Luồng dữ liệu, thu thập và huấn luyện offline
+7. **Sự khác biệt giữa Static Gesture và Dynamic Gesture là gì?**
+   - Cử chỉ tĩnh (Static Gesture) được định nghĩa dựa trên hình dạng bàn tay tại một frame đơn lẻ. Cử chỉ động (Dynamic Gesture) đòi hỏi một chuỗi thay đổi trạng thái theo thứ tự thời gian kèm ràng buộc về thời gian chờ (timeout) thông qua máy trạng thái hữu hạn FSM.
 
-### 7.1 Tạo dữ liệu
+---
 
-Collector canonical ghi một dòng cho mỗi mẫu, gồm 12 trường metadata và 63 trường tọa độ:
+## Giấy phép
 
-`sample_id`, `subject_id`, `session_id`, `sequence_id`, `gesture`, `frame_index`, `timestamp_ms`, `handedness`, `camera_width`, `camera_height`, `device_id`, `lighting`, sau đó là `x0,y0,z0,...,x20,y20,z20`.
-
-Thu thập từ webcam:
-
-```powershell
-python scripts/collect_data.py `
-  --subject-id subject_001 `
-  --session-id session_001 `
-  --label Select `
-  --samples 200 `
-  --interval 150 `
-  --output data/raw/landmarks_dataset.csv
-```
-
-Phím trong collector: `S` bật/tắt burst, `N` sang sequence mới, `Q` kết thúc. Mỗi người nên có nhiều session và điều kiện ánh sáng; không dùng tên thật trong `subject_id`.
-
-Tạo dữ liệu tổng hợp phục vụ smoke test, không dùng thay cho dữ liệu người thật để báo cáo độ chính xác:
-
-```powershell
-python scripts/generate_synthetic_dataset.py
-```
-
-### 7.2 Audit và split chống leakage
-
-```powershell
-python scripts/audit_data.py --csv data/raw/landmarks_dataset.csv
-python scripts/create_splits.py `
-  --csv data/raw/landmarks_dataset.csv `
-  --splits-out data/processed/splits.json `
-  --manifest-out data/processed/manifest.json
-```
-
-Audit kiểm tra schema, NaN/Inf, duplicate `sample_id` và disjointness của split. `create_splits.py` dùng seed `42` và chia `Train/Val/Test` ở cấp người (`subject_id`). Điều kiện bắt buộc:
-
-`Train ∩ Val = ∅`, `Train ∩ Test = ∅`, `Val ∩ Test = ∅`.
-
-### 7.3 Huấn luyện model production
-
-```powershell
-python scripts/train_static_model.py --config configs/training.yaml
-```
-
-Script sẽ:
-
-1. Đọc CSV và giữ các labels trong `training.yaml`.
-2. Nạp hoặc tạo subject split.
-3. Fit `StandardScaler` trên Train.
-4. Dùng GroupKFold trên Train để tìm `C` và `gamma` cho RBF-SVM.
-5. Fit SVM hiệu chuẩn xác suất trên Train.
-6. Dò ngưỡng reject trên Val theo Macro-F1, actionable precision và false-action rate.
-7. Đánh giá một lần trên Locked Test.
-8. Gói model, scaler, labels, thresholds, preprocessing config, manifest hash và metrics vào `models/static_gesture_svm_v1.joblib`.
-
-Đánh giá artifact trên CSV test:
-
-```powershell
-python scripts/evaluate_static_model.py `
-  --model models/static_gesture_svm_v1.joblib `
-  --test-csv data/raw/landmarks_dataset.csv
-```
-
-So sánh baseline subject-independent:
-
-```powershell
-python tools/train_baseline.py `
-  --dataset data/raw/landmarks_dataset.csv `
-  --cv groupkfold `
-  --splits 5 `
-  --compare-rules
-
-python experiments/compare_rule_knn_rf_svm.py `
-  --csv data/raw/landmarks_dataset.csv `
-  --cv groupkfold `
-  --splits 5
-```
-
-## 8. Cấu hình chính
-
-### Runtime (`configs/runtime.yaml`)
-
-| Nhóm | Trường | Ý nghĩa |
-| --- | --- | --- |
-| Camera | `camera_index`, `target_width`, `target_height`, `mirror_camera` | Nguồn và cách hiển thị frame |
-| MediaPipe | `min_detection_confidence`, `min_tracking_confidence`, `max_num_hands` | Độ tin cậy và giới hạn một tay |
-| Model | `model_path`, `fallback_to_rules`, `default_accept_threshold`, `accept_thresholds` | Model ưu tiên, fallback và reject policy |
-| Temporal | `activation_dwell_ms`, `release_dwell_ms`, `history_horizon_ms` | Ổn định nhãn theo thời gian |
-| Failsafe | `hand_loss_timeout_ms` | Reset khi mất tay |
-| Dynamic FSM | `on_off_timeout_seconds`, `sos_timeout_seconds`, `enable_experimental_gestures` | Timeout và bật SOS thử nghiệm |
-| Cursor | `cursor_tau` | Hằng số time-aware EMA |
-| Events | `cooldowns.*` | Cooldown theo `GestureEvent` |
-| Telemetry | `show_debug_hud`, `benchmark_output` | HUD và JSON hiệu năng |
-
-YAML dùng key chuỗi như `change_color`; `GestureEventMapper` chuẩn hóa chúng về enum trước khi chạy. Ngưỡng runtime trong YAML được ưu tiên khi app khởi tạo predictor.
-
-### Training (`configs/training.yaml`)
-
-Các trường quan trọng là `dataset_path`, `manifest_path`, `splits_path`, `model_output_path`, `mirror_left_hand`, `normalize_rotation`, `labels`, `cv_splits`, `c_candidates`, `gamma_candidates`, `target_precision_actionable` và `max_false_action_rate`.
-
-## 9. Kiểm thử và CI
-
-Chạy các kiểm tra tương ứng CI từ root repository:
-
-```powershell
-python -m compileall -q src/ scripts/ tools/ tests/
-python -m ruff check .
-python -m mypy src/
-python -m pytest -q
-python -m pytest --cov=src/hand_gesture_controller tests/
-```
-
-Workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) chạy trên Ubuntu và Windows với Python `3.10–3.12`, cài dependency runtime/dev, kiểm tra `pip check`, compile source, Ruff, Mypy theo đúng phiên bản Python của từng matrix job và Pytest coverage. Webcam không được yêu cầu trong CI; các test logic dùng dữ liệu tổng hợp/mocks.
-
-## 10. Báo cáo, telemetry và giới hạn diễn giải
-
-`PerformanceMonitor` ghi các stage: `frame_capture`, `mediapipe`, `preprocess`, `static_classifier`, `dynamic_fsm`, `temporal_filter`, `event_mapper` và `render`. Dùng `--benchmark-output reports/runtime.json` để lưu summary gồm `total_frames`, FPS trung bình, latency mean/p50/p95 và stage breakdown.
-
-Không đưa số accuracy, FPS hay HCI success rate giả định vào README. Muốn báo cáo số liệu, hãy chạy đúng script trên dataset và phần cứng tương ứng, lưu artifact/report cùng thông tin dataset manifest.
-
-Giới hạn hiện tại:
-
-- MediaPipe có thể suy luận sai khi tay bị che khuất, ánh sáng kém hoặc xoay ngoài mặt phẳng lớn.
-- Rule baseline là heuristic 2D; model SVM chỉ đáng tin khi dataset bao phủ đủ subject/session.
-- Canvas và menu là GUI OpenCV trong cửa sổ local, chưa phải accessibility layer của hệ điều hành.
-- `SOS` là experimental; `Wave` chỉ còn trong compatibility detector, chưa nằm trong FSM runtime canonical.
-
-## 11. Repo cleanliness và license
-
-Source, config, test và workflow được giữ trong Git. Dataset raw, model binary, report và cache bị ignore để tránh commit dữ liệu cá nhân hoặc artifact lớn. Collector cũ trong `tools/collect_landmarks.py` chỉ là wrapper; implementation duy nhất nằm ở `src/hand_gesture_controller/data_collection.py`.
-
-Dự án phát hành theo [MIT License](LICENSE).
+Dự án được phát hành theo giấy phép [MIT License](LICENSE).

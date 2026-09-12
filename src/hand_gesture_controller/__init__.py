@@ -1,47 +1,64 @@
 """Hand Gesture Controller package.
 
-Public classes are loaded lazily so lightweight logic modules can be imported
-without requiring the OpenCV/MediaPipe GUI stack at import time.
+Cung cấp các thành phần cho luồng nhận diện cử chỉ bàn tay HCI:
+Perception -> Preprocessing -> Classification/Rules -> Stabilization -> Event Mapping -> Canvas.
 """
 
-from importlib import import_module
+from .canvas import (
+    CircleObject,
+    CursorFilter,
+    DraggableObject,
+    DraggableObjectManager,
+    RectangleObject,
+    ShapeMenu,
+    StarObject,
+    TriangleObject,
+)
+from .classifier import StaticGestureClassifier, StaticGesturePredictor
+from .config import DEFAULT_THRESHOLDS, GestureThresholds, RuntimeConfig, TrainingConfig
+from .dynamic_gesture import DynamicGestureFSM
+from .event_mapper import GestureEventMapper
+from .hand_detector import HandDetector
+from .preprocessing import LandmarkPreprocessor
+from .rule_baseline import RuleStaticBaseline
+from .schemas import (
+    GestureEvent,
+    GestureModelBundle,
+    HandObservation,
+    StableGesture,
+    StaticPrediction,
+)
+from .stabilizer import GestureStabilizer
+from .telemetry import PerformanceMonitor
 
 __version__ = "1.0.0"
 
-_EXPORTS = {
-    "CursorFilter": (".temporal.cursor_filter", "CursorFilter"),
-    "DEFAULT_THRESHOLDS": (".config", "DEFAULT_THRESHOLDS"),
-    "DraggableObject": (".application.object_manager", "DraggableObject"),
-    "DraggableObjectManager": (".application.object_manager", "DraggableObjectManager"),
-    "DynamicGestureFSM": (".recognition.dynamic_fsm", "DynamicGestureFSM"),
-    "GestureEvent": (".schemas", "GestureEvent"),
-    "GestureEventMapper": (".events.event_mapper", "GestureEventMapper"),
-    "GestureModelBundle": (".schemas", "GestureModelBundle"),
-    "GestureStabilizer": (".temporal.gesture_stabilizer", "GestureStabilizer"),
-    "GestureThresholds": (".config", "GestureThresholds"),
-    "HCIEvent": (".schemas", "HCIEvent"),
-    "HandDetector": (".perception.hand_detector", "HandDetector"),
-    "HandObservation": (".schemas", "HandObservation"),
-    "LandmarkPreprocessor": (".features.landmark_preprocessor", "LandmarkPreprocessor"),
-    "MotionFeatures": (".features.motion_features", "MotionFeatures"),
-    "PerformanceMonitor": (".telemetry.performance", "PerformanceMonitor"),
-    "RuleStaticBaseline": (".recognition.rule_baseline", "RuleStaticBaseline"),
-    "RuntimeConfig": (".config", "RuntimeConfig"),
-    "ShapeMenu": (".application.shape_menu", "ShapeMenu"),
-    "StableGesture": (".schemas", "StableGesture"),
-    "StaticGesturePredictor": (".recognition.static_predictor", "StaticGesturePredictor"),
-    "StaticPrediction": (".schemas", "StaticPrediction"),
-    "TrainingConfig": (".config", "TrainingConfig"),
-}
-
-__all__ = ["__version__", *_EXPORTS]
-
-
-def __getattr__(name: str):
-    """Resolve public symbols on first access."""
-    if name not in _EXPORTS:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    module_name, symbol_name = _EXPORTS[name]
-    symbol = getattr(import_module(module_name, __name__), symbol_name)
-    globals()[name] = symbol
-    return symbol
+__all__ = [
+    "CircleObject",
+    "CursorFilter",
+    "DEFAULT_THRESHOLDS",
+    "DraggableObject",
+    "DraggableObjectManager",
+    "DynamicGestureFSM",
+    "GestureEvent",
+    "GestureEventMapper",
+    "GestureModelBundle",
+    "GestureStabilizer",
+    "GestureThresholds",
+    "HandDetector",
+    "HandObservation",
+    "LandmarkPreprocessor",
+    "PerformanceMonitor",
+    "RectangleObject",
+    "RuleStaticBaseline",
+    "RuntimeConfig",
+    "ShapeMenu",
+    "StableGesture",
+    "StarObject",
+    "StaticGestureClassifier",
+    "StaticGesturePredictor",
+    "StaticPrediction",
+    "TrainingConfig",
+    "TriangleObject",
+    "__version__",
+]

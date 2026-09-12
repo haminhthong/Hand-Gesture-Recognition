@@ -9,7 +9,7 @@ import uuid
 
 import cv2
 
-from .perception.hand_detector import HandDetector
+from .hand_detector import HandDetector
 
 logger = logging.getLogger("collect_data")
 
@@ -177,17 +177,17 @@ def collect_landmarks(
 
 
 def main() -> None:
-    """Điểm nhập CLI thu thập landmark."""
+    """CLI entrypoint for collecting landmark dataset."""
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
-    parser = argparse.ArgumentParser(description="Thu thập landmark theo burst/sequence.")
-    parser.add_argument("--subject-id", required=True, help="Mã người tham gia")
-    parser.add_argument("--session-id", required=True, help="Mã phiên thu thập")
-    parser.add_argument("--label", required=True, choices=ALLOWED_GESTURES, help="Nhãn cử chỉ")
-    parser.add_argument("--samples", type=int, default=100, help="Số mẫu mục tiêu")
-    parser.add_argument("--interval", type=float, default=150.0, help="Khoảng cách lấy mẫu ms")
-    parser.add_argument("--output", default="data/raw/landmarks_dataset.csv", help="CSV output")
-    parser.add_argument("--camera", type=int, default=0, help="Chỉ số camera")
-    parser.add_argument("--lighting", default="normal", help="Điều kiện ánh sáng")
+    parser = argparse.ArgumentParser(description="Collect hand landmarks by burst/sequence.")
+    parser.add_argument("--subject-id", required=True, help="Subject identifier (e.g. subject_001)")
+    parser.add_argument("--session-id", required=True, help="Session identifier (e.g. session_001)")
+    parser.add_argument("--label", required=True, choices=ALLOWED_GESTURES, help="Gesture label")
+    parser.add_argument("--samples", type=int, default=100, help="Target number of samples")
+    parser.add_argument("--interval", type=float, default=150.0, help="Sampling interval in ms")
+    parser.add_argument("--output", default="data/raw/landmarks_dataset.csv", help="Output CSV path")
+    parser.add_argument("--camera", type=int, default=0, help="Camera index")
+    parser.add_argument("--lighting", default="normal", help="Lighting condition description")
     args = parser.parse_args()
 
     collect_landmarks(

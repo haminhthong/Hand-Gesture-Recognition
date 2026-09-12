@@ -1,8 +1,7 @@
-# Cấu hình huấn luyện cho Calibrated RBF-SVM Static Gesture Recognizer
+# Cấu hình huấn luyện cho Static Gesture SVM Classifier
 dataset_path: "data/raw/landmarks_dataset.csv"
-manifest_path: "data/processed/manifest.json"
 splits_path: "data/processed/splits.json"
-model_output_path: "models/static_gesture_svm_v1.joblib"
+model_output_path: "models/static_gesture_svm.joblib"
 
 mirror_left_hand: true
 normalize_rotation: true
@@ -26,5 +25,4 @@ gamma_candidates:
   - "0.01"
   - "0.1"
 
-target_precision_actionable: 0.90
-max_false_action_rate: 0.05
+confidence_threshold: 0.65

@@ -1,14 +1,14 @@
-"""Mô-đun định nghĩa các hợp đồng dữ liệu (Data Schemas / Contracts) cho toàn bộ hệ thống HCI."""
+"""Định nghĩa các cấu trúc dữ liệu cốt lõi cho hệ thống nhận diện cử chỉ HCI."""
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 
 
 class GestureEvent(str, Enum):
-    """Tập các sự kiện hành động không phụ thuộc trực tiếp vào tên cử chỉ cụ thể."""
+    """Các sự kiện tương tác phát sinh tới tầng ứng dụng."""
 
     NONE = "none"
     START_DRAG = "start_drag"
@@ -18,24 +18,20 @@ class GestureEvent(str, Enum):
     DELETE_OBJECT = "delete_object"
     TOGGLE_CANVAS = "toggle_canvas"
     OPEN_MENU = "open_menu"
-    EMERGENCY_SOS = "emergency_sos"
 
 
 @dataclass(frozen=True)
 class HandObservation:
-    """Biểu diễn dữ liệu cảm nhận (Perception) từ khung hình camera sau khi xử lý MediaPipe.
-
-    Module Perception chỉ trả ra đối tượng này, tách biệt hoàn toàn MediaPipe khỏi downstream.
-    """
+    """Dữ liệu cảm nhận từ khung hình camera sau khi xử lý qua MediaPipe Hands."""
 
     landmarks: np.ndarray  # Mảng float32 hình dạng (21, 3) đại diện (x, y, z)
     handedness: str  # "Left" hoặc "Right"
-    handedness_score: float  # Độ tin cậy nhận diện tay trái/phải [0.0, 1.0]
+    handedness_score: float  # Độ tin cậy nhận diện tay [0.0, 1.0]
     timestamp: float  # Thời điểm monotonic (time.perf_counter)
-    frame_width: int  # Chiều rộng thực tế của khung hình camera
-    frame_height: int  # Chiều cao thực tế của khung hình camera
+    frame_width: int  # Chiều rộng khung hình
+    frame_height: int  # Chiều cao khung hình
     palm_size: float  # Khoảng cách 2D tham chiếu (cổ tay -> middle_mcp)
-    hand_center: Tuple[float, float]  # Tọa độ trọng tâm bàn tay 2D (x, y) chuẩn hóa [0.0, 1.0]
+    hand_center: Tuple[float, float]  # Tọa độ tâm bàn tay chuẩn hóa [0.0, 1.0]
 
     def __post_init__(self) -> None:
         if self.landmarks.shape != (21, 3):
@@ -44,47 +40,49 @@ class HandObservation:
 
 @dataclass(frozen=True)
 class StaticPrediction:
-    """Kết quả dự đoán cử chỉ tĩnh từ mô hình Machine Learning hoặc Rule Baseline."""
+    """Kết quả phân loại cử chỉ tĩnh từ mô hình ML hoặc Rule Baseline."""
 
     label: str  # Nhãn cử chỉ ("Fist", "Select", "Options", "Stop", "Peace", "NoAction")
-    confidence: float  # Xác suất cao nhất hoặc độ tin cậy [0.0, 1.0]
-    probabilities: Dict[str, float] = field(default_factory=dict)  # Xác suất từng lớp
-    rejected: bool = False  # True nếu xác suất < accept_threshold và bị chuyển về NoAction
-    source: str = "svm_v1"  # Nguồn nhận diện ("svm_v1", "rule_baseline", ...)
+    confidence: float  # Độ tin cậy hoặc xác suất [0.0, 1.0]
+    probabilities: Dict[str, float] = field(default_factory=dict)
+    rejected: bool = False  # True nếu confidence < confidence_threshold
+    source: str = "svm"
 
 
 @dataclass(frozen=True)
 class StableGesture:
-    """Cử chỉ sau khi đã đi qua bộ lọc ổn định thời gian (Temporal Stabilizer)."""
+    """Cử chỉ sau khi đã qua bộ lọc ổn định thời gian (Temporal Stabilizer)."""
 
-    label: str  # Nhãn cử chỉ ổn định
-    confidence: float  # Độ tin cậy đại diện
-    dwell_time_ms: float  # Thời gian duy trì cử chỉ liên tục (mili-giây)
-    timestamp: float  # Thời điểm ghi nhận (giây)
-
-
-@dataclass(frozen=True)
-class HCIEvent:
-    """Sự kiện tương tác người-máy hoàn chỉnh phát sinh cho Application Layer."""
-
-    event_type: GestureEvent  # Loại sự kiện hành động
-    timestamp: float  # Mốc thời gian phát sinh sự kiện
-    gesture: str  # Cử chỉ kích hoạt sự kiện
-    cursor_pos: Optional[Tuple[int, int]] = None  # Tọa độ con trỏ màn hình (px, py)
+    label: str
+    confidence: float
+    dwell_time_ms: float
+    timestamp: float
 
 
 @dataclass
 class GestureModelBundle:
-    """Gói artifact mô hình static gesture hoàn chỉnh lưu trữ trên đĩa (.joblib)."""
+    """Gói lưu trữ mô hình cử chỉ tĩnh gồm model, scaler, danh sách nhãn và cấu hình."""
 
-    model: Any  # Mô hình phân loại (CalibratedClassifierCV hoặc SVC)
-    scaler: Any  # StandardScaler tương thích 63D
-    label_names: List[str]  # Danh sách tên các nhãn cử chỉ
-    accept_thresholds: Dict[str, float]  # Ngưỡng chấp nhận xác suất theo từng nhãn
-    preprocessor_config: Dict[str, Any]  # Cấu hình tiền xử lý (mirror, rotation, ...)
-    feature_schema_version: str = "1.0.0"
-    dataset_manifest_hash: str = ""
-    training_config: Dict[str, Any] = field(default_factory=dict)
-    metrics: Dict[str, Any] = field(default_factory=dict)
-    git_commit: str = ""
-    model_version: str = "1.0.0"
+    model: Any
+    scaler: Any
+    labels: List[str]
+    threshold: float = 0.65
+    preprocessing: Dict[str, Any] = field(
+        default_factory=lambda: {
+            "mirror_left_hand": True,
+            "normalize_rotation": True,
+        }
+    )
+
+    # Thuộc tính tương thích ngược nếu cần
+    @property
+    def label_names(self) -> List[str]:
+        return self.labels
+
+    @property
+    def preprocessor_config(self) -> Dict[str, Any]:
+        return self.preprocessing
+
+    @property
+    def accept_thresholds(self) -> Dict[str, float]:
+        return {label: self.threshold for label in self.labels}
